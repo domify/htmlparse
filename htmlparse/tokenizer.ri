@@ -441,9 +441,7 @@ pub struct Tokenizer
     while @next >= @queued.size
       # Emptied rather than made anew: a new array per token would stay on
       # the tape until the parse ends.
-      while @queued.size > 0
-        @queued.pop
-      end
+      @queued.clear
       @next = 0
       if @ended
         return token(TokenKind::EOF)

@@ -2005,7 +2005,6 @@ pub struct TreeBuilder
       return Outcome::Done
     end
     pending = @pending_table_text
-    @pending_table_text = Tape::Array(PendingText).new
     contains_nonspace = pending.any? do |entry|
       case entry.split
       when Split::Whitespace    then false
@@ -2020,6 +2019,10 @@ pub struct TreeBuilder
     else
       pending.each { |entry| append_text(entry.text) }
     end
+    # Emptied once read (html5ever's `mem::take`) rather than made anew:
+    # a new array for each table's text would stay on the tape until the
+    # parse ends. Nothing above adds to it.
+    @pending_table_text.clear
     reprocess(@orig_mode, token)
   end
 

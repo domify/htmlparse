@@ -1,0 +1,109 @@
+# Parsing a document or a fragment into a `Dom` on the caller's tape.
+#
+#     tape do
+#       document = parse_document(html.as_tape, Options.new)
+#       dom = document.dom
+#       ...
+#     end
+#
+# The input is UTF-8. The tree, its names, text and attribute values live
+# on the tape the call runs in, viewing the input's bytes wherever they
+# are its bytes unchanged: the input must outlive the tree, as it does
+# when both are on the same tape.
+module htmlparse/parse
+
+import htmlparse/tokenizer::{Tokenizer, normalize_newlines}
+import htmlparse/tree_builder::{TreeBuilder}
+import htmlparse/dom::{Dom, Namespace}
+
+# Why a parse stopped, as Gumbo would have: deeper than
+# `Options#max_tree_depth`, or a tag with more than
+# `Options#max_attributes` attributes.
+pub enum ParseError : UInt8
+  None
+  TreeDepthExceeded
+  TooManyAttributes
+end
+
+# How to parse. The defaults are html5ever's.
+pub struct Options
+  # Whether scripting is enabled: `<noscript>`'s content is then text.
+  property scripting : Bool
+  # Whether a `<template>`'s content goes into a fragment of its own
+  # (`Dom#contents`), as the DOM has it, or among its children, as
+  # libxml2 (Nokogiri) has it.
+  property template_contents : Bool
+  # Whether a byte order mark is dropped at the start, and after each
+  # `</script>`, as html5ever does.
+  property discard_bom : Bool
+  # Gumbo's limits, 0 for none: the parse stops at an element nested this
+  # deep (counting a fragment's `html` element too), or a tag with more
+  # attributes than this, and says so in `Document#error`.
+  property max_tree_depth : Int32
+  property max_attributes : Int32
+
+  def initialize(@scripting : Bool = true, @template_contents : Bool = true, @discard_bom : Bool = true,
+                 @max_tree_depth : Int32 = 0, @max_attributes : Int32 = 0)
+  end
+
+  # What Nokogiri's HTML5 parser (Gumbo) does, as Campfire's Rust port
+  # holds html5ever to it: no scripting, templates' content among their
+  # children, Gumbo's limits of 400. Gumbo drops a byte order mark only at
+  # the start, which the caller does.
+  def self.gumbo : Options
+    Options.new(scripting: false, template_contents: false, discard_bom: false, max_tree_depth: 400,
+      max_attributes: 400)
+  end
+end
+
+@[OnTape]
+pub struct Document
+  getter dom : Dom
+  # The node the parse's nodes are under: the document, or a fragment's
+  # `html` element.
+  getter root : Int32
+  getter error : ParseError
+
+  def initialize(@dom : Dom, @root : Int32, @error : ParseError)
+  end
+
+  def ok? : Bool
+    @error == ParseError::None
+  end
+end
+
+private def tokenizer_for(input : Tape::String, options : Options) : Tokenizer
+  tokenizer = Tokenizer.new(normalize_newlines(input))
+  tokenizer.discard_bom = options.discard_bom
+  tokenizer.max_attributes = options.max_attributes
+  tokenizer
+end
+
+private def finish(builder : TreeBuilder, root : Int32) : Document
+  error = ParseError::None
+  if builder.too_deep
+    error = ParseError::TreeDepthExceeded
+  elsif builder.tokenizer.too_many_attributes
+    error = ParseError::TooManyAttributes
+  end
+  Document.new(builder.dom, root, error)
+end
+
+pub def parse_document(input : Tape::String, options : Options) : Document
+  builder = TreeBuilder.new(tokenizer_for(input, options), options.scripting, options.template_contents,
+    options.max_tree_depth)
+  builder.run
+  finish(builder, builder.dom.document)
+end
+
+# *input* parsed in the context of an element named *context* in
+# *namespace* (`Document#fragment`'s `body`, `Node#fragment`'s own
+# element); its nodes are the children of `Document#root`.
+pub def parse_fragment(input : Tape::String, context : Tape::String, namespace : Namespace,
+                       options : Options) : Document
+  builder = TreeBuilder.new(tokenizer_for(input, options), options.scripting, options.template_contents,
+    options.max_tree_depth)
+  builder.fragment(namespace, context, options.scripting)
+  builder.run
+  finish(builder, builder.root)
+end

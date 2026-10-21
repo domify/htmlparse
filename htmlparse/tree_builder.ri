@@ -1,0 +1,2589 @@
+# The HTML tree builder, ported from html5ever 0.35's
+# (tree_builder/mod.rs, tree_builder/rules.rs, tree_builder/data.rs),
+# rule for rule, with the parsing fix the Rust port backports from 0.39:
+# the active formatting elements are reconstructed before `<svg>` or
+# `<math>` is inserted in body.
+#
+# Where html5ever asks its tree sink, this one does what both of the
+# sinks it is held to do (the Rust port's dom.rs and the oracle's): no
+# MathML annotation-xml integration points, no declarative shadow roots,
+# no form association, and text inserted next to text joins it.
+module htmlparse/tree_builder
+
+import std/int
+import htmlparse/tags::{Tag, tag_of}
+import htmlparse/tokenizer::{Tokenizer, Token, TokenKind, Attr, RawKind, State}
+import htmlparse/dom::{Dom, Namespace, NodeKind}
+
+pub enum InsertionMode : UInt8
+  Initial
+  BeforeHtml
+  BeforeHead
+  InHead
+  InHeadNoscript
+  AfterHead
+  InBody
+  Text
+  InTable
+  InTableText
+  InCaption
+  InColumnGroup
+  InTableBody
+  InRow
+  InCell
+  InSelect
+  InSelectInTable
+  InTemplate
+  AfterBody
+  InFrameset
+  AfterFrameset
+  AfterAfterBody
+  AfterAfterFrameset
+end
+
+pub enum QuirksMode : UInt8
+  NoQuirks
+  LimitedQuirks
+  Quirks
+end
+
+enum Split : UInt8
+  NotSplit
+  Whitespace
+  NotWhitespace
+end
+
+enum Outcome : UInt8
+  Done
+  DoneAckSelfClosing
+  SplitWhitespace
+  Reprocess
+  ReprocessForeign
+  Script
+  ToPlaintext
+  ToRawData
+end
+
+# What the tree builder asks of the tokenizer after a token.
+pub enum Next : UInt8
+  Continue
+  Script
+  Plaintext
+  RawData
+end
+
+NO_NODE = -1
+
+# A token as the tree builder handles it: text may be split at its
+# whitespace, and a tag's name and attributes adjusted.
+@[OnTape]
+struct Tok
+  property kind : TokenKind
+  property split : Split
+  property text : Tape::String
+  property name : Tape::String
+  property tag : Tag
+  property attrs_start : Int32
+  property attrs_count : Int32
+  property self_closing : Bool
+
+  def initialize(@kind : TokenKind, @split : Split, @text : Tape::String, @name : Tape::String,
+                 @tag : Tag, @attrs_start : Int32, @attrs_count : Int32, @self_closing : Bool)
+  end
+
+  def start?(tag : Tag) : Bool
+    @kind == TokenKind::StartTag && @tag == tag
+  end
+
+  def end?(tag : Tag) : Bool
+    @kind == TokenKind::EndTag && @tag == tag
+  end
+
+  def start? : Bool
+    @kind == TokenKind::StartTag
+  end
+
+  def end? : Bool
+    @kind == TokenKind::EndTag
+  end
+
+  def text? : Bool
+    @kind == TokenKind::Text
+  end
+end
+
+# An entry of the list of active formatting elements: an element and the
+# tag it was made for, or a marker (`node` NO_NODE).
+@[OnTape]
+struct FormatEntry
+  property node : Int32
+  getter name : Tape::String
+  getter tag : Tag
+  getter attrs_start : Int32
+  getter attrs_count : Int32
+
+  def initialize(@node : Int32, @name : Tape::String, @tag : Tag, @attrs_start : Int32, @attrs_count : Int32)
+  end
+
+  def marker? : Bool
+    @node == NO_NODE
+  end
+end
+
+@[OnTape]
+struct PendingText
+  getter split : Split
+  getter text : Tape::String
+
+  def initialize(@split : Split, @text : Tape::String)
+  end
+end
+
+# Where a node goes: as *parent*'s last child, or (foster parenting)
+# before *element* when it has a parent, else as *previous*'s last child.
+struct InsertionPoint
+  getter parent : Int32
+  getter element : Int32
+  getter previous : Int32
+
+  def initialize(@parent : Int32, @element : Int32, @previous : Int32)
+  end
+
+  def foster? : Bool
+    @parent == NO_NODE
+  end
+end
+
+private def ascii_whitespace?(byte : UInt8) : Bool
+  byte == 0x20_u8 || byte == 0x0a_u8 || byte == 0x09_u8 || byte == 0x0c_u8 || byte == 0x0d_u8
+end
+
+private def any_not_whitespace(text : Tape::String) : Bool
+  text.each_byte { |byte| return true unless ascii_whitespace?(byte) }
+  false
+end
+
+private def eq_ignore_ascii_case(a : Tape::String, b : Tape::String) : Bool
+  return false unless a.bytesize == b.bytesize
+  i = 0
+  while i < a.bytesize
+    x = a[i]
+    y = b[i]
+    x = x + 0x20_u8 if x >= 0x41_u8 && x <= 0x5a_u8
+    y = y + 0x20_u8 if y >= 0x41_u8 && y <= 0x5a_u8
+    return false unless x == y
+    i = i + 1
+  end
+  true
+end
+
+@[OnTape]
+pub struct TreeBuilder
+  getter dom : Dom
+  getter tokenizer : Tokenizer
+  getter quirks_mode : QuirksMode
+  # Set when the tree builder stopped at `max_tree_depth`.
+  getter too_deep : Bool
+  # The raw text kind after `Next::RawData`.
+  getter raw_kind : RawKind
+
+  @scripting : Bool
+  @template_contents : Bool
+  @max_open_elements : Int32
+  @mode : InsertionMode
+  @orig_mode : InsertionMode
+  @template_modes : Tape::Array(InsertionMode)
+  @pending_table_text : Tape::Array(PendingText)
+  @open : Tape::Array(Int32)
+  @formatting : Tape::Array(FormatEntry)
+  @head_elem : Int32
+  @form_elem : Int32
+  @context_elem : Int32
+  @frameset_ok : Bool
+  @ignore_lf : Bool
+  @foster_parenting : Bool
+  @empty : Tape::String
+  # What a step hands back with `Reprocess` and `SplitWhitespace`.
+  @next_mode : InsertionMode
+  @next_token : Tok
+
+  # A tree builder for a document. *max_tree_depth* is Gumbo's limit, 0
+  # for none.
+  def initialize(@tokenizer : Tokenizer, scripting : Bool, template_contents : Bool, max_tree_depth : Int32)
+    @empty = @tokenizer.input[0, 0]
+    @dom = Dom.new(@tokenizer.attrs, @empty)
+    @scripting = scripting
+    @template_contents = template_contents
+    @max_open_elements = max_tree_depth > 0 ? max_tree_depth + 1 : 0
+    @too_deep = false
+    @raw_kind = RawKind::Rcdata
+    @quirks_mode = QuirksMode::NoQuirks
+    @mode = InsertionMode::Initial
+    @orig_mode = InsertionMode::Initial
+    @template_modes = Tape::Array(InsertionMode).new
+    @pending_table_text = Tape::Array(PendingText).new
+    @open = Tape::Array(Int32).new(16)
+    @formatting = Tape::Array(FormatEntry).new
+    @head_elem = NO_NODE
+    @form_elem = NO_NODE
+    @context_elem = NO_NODE
+    @frameset_ok = true
+    @ignore_lf = false
+    @foster_parenting = false
+    @next_mode = InsertionMode::Initial
+    @next_token = Tok.new(TokenKind::EOF, Split::NotSplit, @empty, @empty, Tag::Other, 0, 0, false)
+  end
+
+  # Sets up a fragment parse in the context of an element named *name* in
+  # *namespace* (`new_for_fragment`), and the tokenizer's state for it.
+  # *context_allows_scripting* is html5ever's
+  # `context_element_allows_scripting`.
+  def fragment(namespace : Namespace, name : Tape::String, context_allows_scripting : Bool) : Nil
+    @context_elem = create_element(namespace, name, tag_of(name), @tokenizer.attrs.size, 0)
+    @template_modes << InsertionMode::InTemplate if @dom.html?(@context_elem, Tag::Template)
+    create_root(@tokenizer.attrs.size, 0)
+    @mode = reset_insertion_mode
+    return unless namespace == Namespace::Html
+    case @dom.tag(@context_elem)
+    when Tag::Title, Tag::Textarea
+      @tokenizer.start_in(State::RawData, RawKind::Rcdata)
+    when Tag::Style, Tag::Xmp, Tag::Iframe, Tag::Noembed, Tag::Noframes
+      @tokenizer.start_in(State::RawData, RawKind::Rawtext)
+    when Tag::Script
+      @tokenizer.start_in(State::RawData, RawKind::ScriptData)
+    when Tag::Noscript
+      @tokenizer.start_in(State::RawData, RawKind::Rawtext) if context_allows_scripting
+    when Tag::Plaintext
+      @tokenizer.start_in(State::Plaintext, RawKind::Rcdata)
+    end
+  end
+
+  def fragment? : Bool
+    @context_elem != NO_NODE
+  end
+
+  # The fragment's root: the `html` element its nodes are put in.
+  def root : Int32
+    child = @dom.first_child(@dom.document)
+    while child != NO_NODE
+      return child if @dom.html?(child, Tag::Html)
+      child = @dom.next_sibling(child)
+    end
+    @dom.document
+  end
+
+  def open_elements_size : Int32
+    @open.size
+  end
+
+  # Reads the whole input into the tree.
+  def run : Nil
+    while true
+      @tokenizer.foreign_content = !@open.empty? && @dom.namespace(adjusted_current_node) != Namespace::Html
+      token = @tokenizer.next_token
+      eof = token.kind == TokenKind::EOF
+      case process_token(token)
+      when Next::Script
+        @tokenizer.script_ended
+      when Next::Plaintext
+        @tokenizer.switch_to_plaintext
+      when Next::RawData
+        @tokenizer.switch_to_raw(@raw_kind)
+      end
+      break if eof
+      if @max_open_elements > 0 && @open.size > @max_open_elements
+        @too_deep = true
+        break
+      end
+    end
+  end
+
+  # --- tokens in ----------------------------------------------------------
+
+  def process_token(token : Token) : Next
+    ignore_lf = @ignore_lf
+    @ignore_lf = false
+    case token.kind
+    when TokenKind::Doctype
+      if @mode == InsertionMode::Initial
+        quirk = doctype_quirks(token)
+        node = @dom.create_doctype(token.name, token.public_id, token.system_id)
+        @dom.append(@dom.document, node)
+        @quirks_mode = quirk
+        @mode = InsertionMode::BeforeHtml
+      end
+      return Next::Continue
+    when TokenKind::Text
+      text = token.text
+      text = text[1, text.bytesize - 1] if ignore_lf && text.bytesize > 0 && text[0] == 0x0a_u8
+      return Next::Continue if text.empty?
+      tok = Tok.new(TokenKind::Text, Split::NotSplit, text, @empty, Tag::Other, 0, 0, false)
+      process_to_completion(tok)
+    when TokenKind::StartTag, TokenKind::EndTag
+      tok = Tok.new(token.kind, Split::NotSplit, @empty, token.name, tag_of(token.name), token.attrs_start,
+        token.attrs_count, token.self_closing)
+      process_to_completion(tok)
+    else
+      tok = Tok.new(token.kind, Split::NotSplit, token.text, @empty, Tag::Other, 0, 0, false)
+      process_to_completion(tok)
+    end
+  end
+
+  private def process_to_completion(first : Tok) : Next
+    token = first
+    has_more = false
+    more = first
+    while true
+      outcome = foreign?(token) ? step_foreign(token) : step(@mode, token)
+      case outcome
+      when Outcome::Done, Outcome::DoneAckSelfClosing
+        return Next::Continue unless has_more
+        token = more
+        has_more = false
+      when Outcome::Reprocess
+        @mode = @next_mode
+        token = @next_token
+      when Outcome::ReprocessForeign
+        token = @next_token
+      when Outcome::SplitWhitespace
+        text = @next_token.text
+        whitespace = ascii_whitespace?(text[0])
+        run = 1
+        while run < text.bytesize && ascii_whitespace?(text[run]) == whitespace
+          run = run + 1
+        end
+        token = Tok.new(TokenKind::Text, whitespace ? Split::Whitespace : Split::NotWhitespace, text[0, run],
+          @empty, Tag::Other, 0, 0, false)
+        if run < text.bytesize
+          more = Tok.new(TokenKind::Text, Split::NotSplit, text[run, text.bytesize - run], @empty, Tag::Other,
+            0, 0, false)
+          has_more = true
+        end
+      when Outcome::Script
+        return Next::Script
+      when Outcome::ToPlaintext
+        return Next::Plaintext
+      else
+        return Next::RawData
+      end
+    end
+    Next::Continue
+  end
+
+  private def reprocess(mode : InsertionMode, token : Tok) : Outcome
+    @next_mode = mode
+    @next_token = token
+    Outcome::Reprocess
+  end
+
+  private def split_whitespace(token : Tok) : Outcome
+    @next_token = token
+    Outcome::SplitWhitespace
+  end
+
+  # --- the doctype ------------------------------------------------------
+
+  private def doctype_quirks(token : Token) : QuirksMode
+    return QuirksMode::Quirks if token.force_quirks
+    return QuirksMode::Quirks unless token.has_name && token.name == "html"
+    public_id = lowercase(token.public_id)
+    system_id = lowercase(token.system_id)
+    has_public = token.has_public_id
+    has_system = token.has_system_id
+    if has_public
+      QUIRKY_PUBLIC_MATCHES.each { |text| return QuirksMode::Quirks if public_id == text }
+    end
+    if has_system
+      QUIRKY_SYSTEM_MATCHES.each { |text| return QuirksMode::Quirks if system_id == text }
+    end
+    if has_public
+      QUIRKY_PUBLIC_PREFIXES.each { |text| return QuirksMode::Quirks if public_id.starts_with?(text) }
+      LIMITED_QUIRKY_PUBLIC_PREFIXES.each { |text| return QuirksMode::LimitedQuirks if public_id.starts_with?(text) }
+      HTML4_PUBLIC_PREFIXES.each do |text|
+        if public_id.starts_with?(text)
+          return has_system ? QuirksMode::LimitedQuirks : QuirksMode::Quirks
+        end
+      end
+    end
+    QuirksMode::NoQuirks
+  end
+
+  private def lowercase(text : Tape::String) : Tape::String
+    writer = Tape::String::Writer.new(text.bytesize)
+    text.each_byte { |byte| writer.push(byte >= 0x41_u8 && byte <= 0x5a_u8 ? byte + 0x20_u8 : byte) }
+    writer.finish
+  end
+
+  # --- the stack of open elements -----------------------------------------
+
+  private def current_node : Int32
+    @open[@open.size - 1]
+  end
+
+  private def adjusted_current_node : Int32
+    return @context_elem if @open.size == 1 && @context_elem != NO_NODE
+    current_node
+  end
+
+  private def push(node : Int32) : Nil
+    @open << node
+  end
+
+  private def pop : Int32
+    @open.pop
+  end
+
+  private def truncate_open(size : Int32) : Nil
+    while @open.size > size
+      @open.pop
+    end
+  end
+
+  private def remove_open_at(index : Int32) : Nil
+    i = index
+    while i < @open.size - 1
+      @open[i] = @open[i + 1]
+      i = i + 1
+    end
+    @open.pop
+  end
+
+  private def insert_open_at(index : Int32, node : Int32) : Nil
+    @open << node
+    i = @open.size - 1
+    while i > index
+      @open[i] = @open[i - 1]
+      i = i - 1
+    end
+    @open[index] = node
+  end
+
+  private def remove_from_stack(node : Int32) : Nil
+    i = @open.size - 1
+    while i >= 0
+      if @open[i] == node
+        remove_open_at(i)
+        return
+      end
+      i = i - 1
+    end
+  end
+
+  private def html_elem : Int32
+    @open[0]
+  end
+
+  private def body_elem : Int32
+    return NO_NODE if @open.size <= 1
+    node = @open[1]
+    @dom.html?(node, Tag::Body) ? node : NO_NODE
+  end
+
+  # Whether *node* is the HTML element named *name*, as *tag*: by name
+  # where it is not one the parser knows.
+  private def named?(node : Int32, tag : Tag, name : Tape::String) : Bool
+    return @dom.html?(node, tag) unless tag == Tag::Other
+    @dom.html?(node, Tag::Other) && @dom.name(node) == name
+  end
+
+  private def current_node_named(tag : Tag) : Bool
+    @dom.html?(current_node, tag)
+  end
+
+  private def in_html_elem_named(tag : Tag) : Bool
+    @open.any? { |node| @dom.html?(node, tag) }
+  end
+
+  # --- tag sets -----------------------------------------------------------
+
+  private def html_tag(node : Int32) : Tag
+    return Tag::Other unless @dom.namespace(node) == Namespace::Html && @dom.element?(node)
+    @dom.tag(node)
+  end
+
+  private def mathml_text_integration_point?(node : Int32) : Bool
+    return false unless @dom.namespace(node) == Namespace::MathML
+    case @dom.tag(node)
+    when Tag::Mi, Tag::Mo, Tag::Mn, Tag::Ms, Tag::Mtext then true
+    else                                                     false
+    end
+  end
+
+  private def svg_html_integration_point?(node : Int32) : Bool
+    return false unless @dom.namespace(node) == Namespace::Svg
+    case @dom.tag(node)
+    when Tag::ForeignObject, Tag::Desc, Tag::Title then true
+    else                                                false
+    end
+  end
+
+  private def default_scope?(node : Int32) : Bool
+    case html_tag(node)
+    when Tag::Applet, Tag::Caption, Tag::Html, Tag::Table, Tag::Td, Tag::Th, Tag::Marquee, Tag::Object,
+         Tag::Template
+      true
+    else
+      mathml_text_integration_point?(node) || svg_html_integration_point?(node)
+    end
+  end
+
+  # The scope sets, by number: what `in_scope` stops at.
+  SCOPE_DEFAULT   = 0
+  SCOPE_LIST_ITEM = 1
+  SCOPE_BUTTON    = 2
+  SCOPE_TABLE     = 3
+  SCOPE_SELECT    = 4
+
+  private def scope?(scope : Int32, node : Int32) : Bool
+    case scope
+    when SCOPE_DEFAULT
+      default_scope?(node)
+    when SCOPE_LIST_ITEM
+      tag = html_tag(node)
+      tag == Tag::Ol || tag == Tag::Ul || default_scope?(node)
+    when SCOPE_BUTTON
+      html_tag(node) == Tag::Button || default_scope?(node)
+    when SCOPE_TABLE
+      tag = html_tag(node)
+      tag == Tag::Html || tag == Tag::Table || tag == Tag::Template
+    else
+      tag = html_tag(node)
+      !(tag == Tag::Optgroup || tag == Tag::Option)
+    end
+  end
+
+  # Whether the HTML element *tag* (by *name* where it is `Other`) is in
+  # *scope*.
+  private def in_scope_named(scope : Int32, tag : Tag, name : Tape::String) : Bool
+    i = @open.size - 1
+    while i >= 0
+      node = @open[i]
+      return true if named?(node, tag, name)
+      return false if scope?(scope, node)
+      i = i - 1
+    end
+    false
+  end
+
+  private def in_scope_named(scope : Int32, tag : Tag) : Bool
+    in_scope_named(scope, tag, @empty)
+  end
+
+  private def in_scope_node(scope : Int32, target : Int32) : Bool
+    i = @open.size - 1
+    while i >= 0
+      node = @open[i]
+      return true if node == target
+      return false if scope?(scope, node)
+      i = i - 1
+    end
+    false
+  end
+
+  # Sets of HTML elements, by number, for `in_scope_set`, `pop_until_set`
+  # and `current_node_in`.
+  SET_HEADING          = 0
+  SET_TD_TH            = 1
+  SET_TABLE_OUTER      = 2
+  SET_TABLE_SCOPE      = 3
+  SET_TABLE_BODY_CTX   = 4
+  SET_TABLE_ROW_CTX    = 5
+  SET_FOSTER_TARGET    = 6
+  SET_TABLE_BODY_OUTER = 7
+
+  private def in_set?(set : Int32, node : Int32) : Bool
+    tag = html_tag(node)
+    case set
+    when SET_HEADING
+      tag == Tag::H1 || tag == Tag::H2 || tag == Tag::H3 || tag == Tag::H4 || tag == Tag::H5 || tag == Tag::H6
+    when SET_TD_TH
+      tag == Tag::Td || tag == Tag::Th
+    when SET_TABLE_OUTER, SET_FOSTER_TARGET
+      tag == Tag::Table || tag == Tag::Tbody || tag == Tag::Tfoot || tag == Tag::Thead || tag == Tag::Tr
+    when SET_TABLE_SCOPE
+      tag == Tag::Html || tag == Tag::Table || tag == Tag::Template
+    when SET_TABLE_BODY_CTX
+      tag == Tag::Tbody || tag == Tag::Tfoot || tag == Tag::Thead || tag == Tag::Template || tag == Tag::Html
+    when SET_TABLE_ROW_CTX
+      tag == Tag::Tr || tag == Tag::Template || tag == Tag::Html
+    else
+      tag == Tag::Table || tag == Tag::Tbody || tag == Tag::Tfoot
+    end
+  end
+
+  private def in_scope_set(scope : Int32, set : Int32) : Bool
+    i = @open.size - 1
+    while i >= 0
+      node = @open[i]
+      return true if in_set?(set, node)
+      return false if scope?(scope, node)
+      i = i - 1
+    end
+    false
+  end
+
+  private def current_node_in(set : Int32) : Bool
+    in_set?(set, current_node)
+  end
+
+  private def special?(node : Int32) : Bool
+    case html_tag(node)
+    when Tag::Address, Tag::Applet, Tag::Area, Tag::Article, Tag::Aside, Tag::Base, Tag::Basefont,
+         Tag::Bgsound, Tag::Blockquote, Tag::Body, Tag::Br, Tag::Button, Tag::Caption, Tag::Center,
+         Tag::Col, Tag::Colgroup, Tag::Dd, Tag::Details, Tag::Dir, Tag::Div, Tag::Dl, Tag::Dt, Tag::Embed,
+         Tag::Fieldset, Tag::Figcaption, Tag::Figure, Tag::Footer, Tag::Form, Tag::Frame, Tag::Frameset,
+         Tag::H1, Tag::H2, Tag::H3, Tag::H4, Tag::H5, Tag::H6, Tag::Head, Tag::Header, Tag::Hgroup,
+         Tag::Hr, Tag::Html, Tag::Iframe, Tag::Img, Tag::Input, Tag::Isindex, Tag::Li, Tag::Link,
+         Tag::Listing, Tag::Main, Tag::Marquee, Tag::Menu, Tag::Meta, Tag::Nav, Tag::Noembed,
+         Tag::Noframes, Tag::Noscript, Tag::Object, Tag::Ol, Tag::P, Tag::Param, Tag::Plaintext,
+         Tag::Pre, Tag::Script, Tag::Section, Tag::Select, Tag::Source, Tag::Style, Tag::Summary,
+         Tag::Table, Tag::Tbody, Tag::Td, Tag::Template, Tag::Textarea, Tag::Tfoot, Tag::Th, Tag::Thead,
+         Tag::Title, Tag::Tr, Tag::Track, Tag::Ul, Tag::Wbr, Tag::Xmp
+      true
+    else
+      false
+    end
+  end
+
+  private def cursory_implied_end?(node : Int32) : Bool
+    case html_tag(node)
+    when Tag::Dd, Tag::Dt, Tag::Li, Tag::Option, Tag::Optgroup, Tag::P, Tag::Rb, Tag::Rp, Tag::Rt, Tag::Rtc
+      true
+    else
+      false
+    end
+  end
+
+  private def thorough_implied_end?(node : Int32) : Bool
+    case html_tag(node)
+    when Tag::Caption, Tag::Colgroup, Tag::Tbody, Tag::Td, Tag::Tfoot, Tag::Th, Tag::Thead, Tag::Tr
+      true
+    else
+      cursory_implied_end?(node)
+    end
+  end
+
+  # Pops the cursory implied end tags, but not *except* (`Other` for
+  # none), and not `p` when *keep_p*; all of the thorough ones when
+  # *thorough*.
+  private def generate_implied_end_tags(thorough : Bool, except : Tag, keep_p : Bool) : Nil
+    while !@open.empty?
+      node = current_node
+      tag = html_tag(node)
+      implied = thorough ? thorough_implied_end?(node) : cursory_implied_end?(node)
+      return unless implied
+      return if except != Tag::Other && tag == except
+      return if keep_p && tag == Tag::P
+      pop
+    end
+  end
+
+  private def generate_implied_end_tags : Nil
+    generate_implied_end_tags(false, Tag::Other, false)
+  end
+
+  private def pop_until_current(set : Int32) : Nil
+    while !current_node_in(set)
+      pop
+    end
+  end
+
+  # Pops up to and including the HTML element *tag* (by *name* where it is
+  # `Other`); how many it popped.
+  private def pop_until_named(tag : Tag, name : Tape::String) : Int32
+    n = 0
+    while true
+      n = n + 1
+      break if @open.empty?
+      node = pop
+      break if named?(node, tag, name)
+    end
+    n
+  end
+
+  private def pop_until_named(tag : Tag) : Int32
+    pop_until_named(tag, @empty)
+  end
+
+  private def pop_until_set(set : Int32) : Int32
+    n = 0
+    while true
+      n = n + 1
+      break if @open.empty?
+      node = pop
+      break if in_set?(set, node)
+    end
+    n
+  end
+
+  private def expect_to_close(tag : Tag, name : Tape::String) : Nil
+    pop_until_named(tag, name)
+  end
+
+  private def expect_to_close(tag : Tag) : Nil
+    pop_until_named(tag)
+  end
+
+  private def close_p_element : Nil
+    generate_implied_end_tags(false, Tag::Other, true)
+    expect_to_close(Tag::P)
+  end
+
+  private def close_p_element_in_button_scope : Nil
+    close_p_element if in_scope_named(SCOPE_BUTTON, Tag::P)
+  end
+
+  private def close_the_cell : Nil
+    generate_implied_end_tags
+    pop_until_set(SET_TD_TH)
+    clear_active_formatting_to_marker
+  end
+
+  private def reset_insertion_mode : InsertionMode
+    i = @open.size - 1
+    while i >= 0
+      node = @open[i]
+      last = i == 0
+      node = @context_elem if last && @context_elem != NO_NODE
+      if @dom.namespace(node) != Namespace::Html
+        i = i - 1
+        next
+      end
+      case @dom.tag(node)
+      when Tag::Select
+        j = i - 1
+        while j >= 0
+          ancestor = @open[j]
+          return InsertionMode::InSelect if @dom.html?(ancestor, Tag::Template)
+          return InsertionMode::InSelectInTable if @dom.html?(ancestor, Tag::Table)
+          j = j - 1
+        end
+        return InsertionMode::InSelect
+      when Tag::Td, Tag::Th
+        return InsertionMode::InCell unless last
+      when Tag::Tr
+        return InsertionMode::InRow
+      when Tag::Tbody, Tag::Thead, Tag::Tfoot
+        return InsertionMode::InTableBody
+      when Tag::Caption
+        return InsertionMode::InCaption
+      when Tag::Colgroup
+        return InsertionMode::InColumnGroup
+      when Tag::Table
+        return InsertionMode::InTable
+      when Tag::Template
+        return @template_modes[@template_modes.size - 1]
+      when Tag::Head
+        return InsertionMode::InHead unless last
+      when Tag::Body
+        return InsertionMode::InBody
+      when Tag::Frameset
+        return InsertionMode::InFrameset
+      when Tag::Html
+        return @head_elem == NO_NODE ? InsertionMode::BeforeHead : InsertionMode::AfterHead
+      end
+      i = i - 1
+    end
+    InsertionMode::InBody
+  end
+
+  # --- the list of active formatting elements -----------------------------
+
+  private def position_in_active_formatting(node : Int32) : Int32
+    i = 0
+    while i < @formatting.size
+      return i if @formatting[i].node == node
+      i = i + 1
+    end
+    -1
+  end
+
+  private def remove_formatting_at(index : Int32) : Nil
+    i = index
+    while i < @formatting.size - 1
+      @formatting[i] = @formatting[i + 1]
+      i = i + 1
+    end
+    @formatting.pop
+  end
+
+  private def insert_formatting_at(index : Int32, entry : FormatEntry) : Nil
+    @formatting << entry
+    i = @formatting.size - 1
+    while i > index
+      @formatting[i] = @formatting[i - 1]
+      i = i - 1
+    end
+    @formatting[index] = entry
+  end
+
+  private def push_marker : Nil
+    @formatting << FormatEntry.new(NO_NODE, @empty, Tag::Other, 0, 0)
+  end
+
+  private def clear_active_formatting_to_marker : Nil
+    while !@formatting.empty?
+      entry = @formatting.pop
+      break if entry.marker?
+    end
+  end
+
+  private def marker_or_open?(entry : FormatEntry) : Bool
+    return true if entry.marker?
+    node = entry.node
+    @open.any? { |open| open == node }
+  end
+
+  private def reconstruct_active_formatting_elements : Nil
+    return if @formatting.empty?
+    return if marker_or_open?(@formatting[@formatting.size - 1])
+    index = @formatting.size - 1
+    while true
+      break if index == 0
+      index = index - 1
+      if marker_or_open?(@formatting[index])
+        index = index + 1
+        break
+      end
+    end
+    while true
+      entry = @formatting[index]
+      node = insert_element(true, Namespace::Html, entry.name, entry.tag, entry.attrs_start, entry.attrs_count)
+      @formatting[index] = FormatEntry.new(node, entry.name, entry.tag, entry.attrs_start, entry.attrs_count)
+      break if index == @formatting.size - 1
+      index = index + 1
+    end
+  end
+
+  # Whether two tags have the same name and attributes, in any order.
+  private def same_tag?(token : Tok, entry : FormatEntry) : Bool
+    return false unless token.tag == entry.tag && token.name == entry.name
+    return false unless token.attrs_count == entry.attrs_count
+    attrs = @dom.attrs
+    i = 0
+    while i < token.attrs_count
+      a = attrs[token.attrs_start + i]
+      found = false
+      j = 0
+      while j < entry.attrs_count
+        b = attrs[entry.attrs_start + j]
+        if a.name == b.name && a.namespace == b.namespace && a.prefix == b.prefix && a.value == b.value
+          found = true
+          break
+        end
+        j = j + 1
+      end
+      return false unless found
+      i = i + 1
+    end
+    true
+  end
+
+  private def create_formatting_element_for(token : Tok) : Int32
+    first_match = -1
+    matches = 0
+    i = @formatting.size - 1
+    while i >= 0
+      entry = @formatting[i]
+      break if entry.marker?
+      if same_tag?(token, entry)
+        first_match = i
+        matches = matches + 1
+      end
+      i = i - 1
+    end
+    remove_formatting_at(first_match) if matches >= 3
+    node = insert_element_for(token)
+    @formatting << FormatEntry.new(node, token.name, token.tag, token.attrs_start, token.attrs_count)
+    node
+  end
+
+  # --- inserting ----------------------------------------------------------
+
+  private def create_element(namespace : Namespace, name : Tape::String, tag : Tag, start : Int32, count : Int32) : Int32
+    node = @dom.create_element(namespace, name, tag, start, count)
+    if @template_contents && namespace == Namespace::Html && tag == Tag::Template
+      @dom.set_contents(node, @dom.create_fragment)
+    end
+    node
+  end
+
+  private def template_contents(node : Int32) : Int32
+    return node unless @template_contents
+    @dom.contents(node)
+  end
+
+  private def appropriate_place_for_insertion(override_target : Int32) : InsertionPoint
+    target = override_target == NO_NODE ? current_node : override_target
+    unless @foster_parenting && in_set?(SET_FOSTER_TARGET, target)
+      if @dom.html?(target, Tag::Template)
+        return InsertionPoint.new(template_contents(target), NO_NODE, NO_NODE)
+      end
+      return InsertionPoint.new(target, NO_NODE, NO_NODE)
+    end
+    i = @open.size - 1
+    while i >= 0
+      node = @open[i]
+      if @dom.html?(node, Tag::Template)
+        return InsertionPoint.new(template_contents(node), NO_NODE, NO_NODE)
+      elsif @dom.html?(node, Tag::Table)
+        return InsertionPoint.new(NO_NODE, node, @open[i - 1])
+      end
+      i = i - 1
+    end
+    InsertionPoint.new(html_elem, NO_NODE, NO_NODE)
+  end
+
+  private def insert_node_at(point : InsertionPoint, node : Int32) : Nil
+    if !point.foster?
+      @dom.append(point.parent, node)
+    elsif @dom.parent(point.element) != NO_NODE
+      @dom.insert_before(point.element, node)
+    else
+      @dom.append(point.previous, node)
+    end
+  end
+
+  private def insert_text_at(point : InsertionPoint, text : Tape::String) : Nil
+    if !point.foster?
+      @dom.append_text(point.parent, text)
+    elsif @dom.parent(point.element) != NO_NODE
+      @dom.insert_text_before(point.element, text)
+    else
+      @dom.append_text(point.previous, text)
+    end
+  end
+
+  private def insert_appropriately(node : Int32, override_target : Int32) : Nil
+    insert_node_at(appropriate_place_for_insertion(override_target), node)
+  end
+
+  private def append_text(text : Tape::String) : Outcome
+    insert_text_at(appropriate_place_for_insertion(NO_NODE), text)
+    Outcome::Done
+  end
+
+  private def append_comment(text : Tape::String) : Outcome
+    insert_appropriately(@dom.create_comment(text), NO_NODE)
+    Outcome::Done
+  end
+
+  private def append_comment_to_doc(text : Tape::String) : Outcome
+    @dom.append(@dom.document, @dom.create_comment(text))
+    Outcome::Done
+  end
+
+  private def append_comment_to_html(text : Tape::String) : Outcome
+    @dom.append(html_elem, @dom.create_comment(text))
+    Outcome::Done
+  end
+
+  private def create_root(start : Int32, count : Int32) : Nil
+    node = create_element(Namespace::Html, "html".as_tape, Tag::Html, start, count)
+    push(node)
+    @dom.append(@dom.document, node)
+  end
+
+  private def insert_element(push : Bool, namespace : Namespace, name : Tape::String, tag : Tag, start : Int32,
+                             count : Int32) : Int32
+    node = create_element(namespace, name, tag, start, count)
+    insert_node_at(appropriate_place_for_insertion(NO_NODE), node)
+    push(node) if push
+    node
+  end
+
+  private def insert_element_for(token : Tok) : Int32
+    insert_element(true, Namespace::Html, token.name, token.tag, token.attrs_start, token.attrs_count)
+  end
+
+  private def insert_and_pop_element_for(token : Tok) : Int32
+    insert_element(false, Namespace::Html, token.name, token.tag, token.attrs_start, token.attrs_count)
+  end
+
+  private def insert_phantom(name : ::String) : Int32
+    tape_name = name.as_tape
+    insert_element(true, Namespace::Html, tape_name, tag_of(tape_name), @dom.attrs.size, 0)
+  end
+
+  private def is_type_hidden(token : Tok) : Bool
+    i = 0
+    while i < token.attrs_count
+      attr = @dom.attrs[token.attrs_start + i]
+      if attr.namespace == 0_u8 && attr.name == "type"
+        return eq_ignore_ascii_case(attr.value, "hidden".as_tape)
+      end
+      i = i + 1
+    end
+    false
+  end
+
+  private def has_attr?(token : Tok, name : ::String) : Bool
+    i = 0
+    while i < token.attrs_count
+      attr = @dom.attrs[token.attrs_start + i]
+      return true if attr.namespace == 0_u8 && attr.name == name
+      i = i + 1
+    end
+    false
+  end
+
+  private def to_raw_text_mode(kind : RawKind) : Outcome
+    @orig_mode = @mode
+    @mode = InsertionMode::Text
+    @raw_kind = kind
+    Outcome::ToRawData
+  end
+
+  private def parse_raw_data(token : Tok, kind : RawKind) : Outcome
+    insert_element_for(token)
+    to_raw_text_mode(kind)
+  end
+
+  private def foster_parent_in_body(token : Tok) : Outcome
+    @foster_parenting = true
+    outcome = step(InsertionMode::InBody, token)
+    @foster_parenting = false
+    outcome
+  end
+
+  private def process_chars_in_table(token : Tok) : Outcome
+    if current_node_in(SET_TABLE_OUTER)
+      @orig_mode = @mode
+      return reprocess(InsertionMode::InTableText, token)
+    end
+    foster_parent_in_body(token)
+  end
+
+  # --- the adoption agency algorithm --------------------------------------
+
+  private def adoption_agency(subject : Tag) : Nil
+    if current_node_named(subject) && position_in_active_formatting(current_node) < 0
+      pop
+      return
+    end
+    8.times do
+      fmt_index = -1
+      i = @formatting.size - 1
+      while i >= 0
+        entry = @formatting[i]
+        break if entry.marker?
+        if entry.tag == subject
+          fmt_index = i
+          break
+        end
+        i = i - 1
+      end
+      if fmt_index < 0
+        name = subject_name(subject)
+        process_end_tag_in_body(Tok.new(TokenKind::EndTag, Split::NotSplit, @empty, name, subject, 0, 0, false))
+        return
+      end
+      fmt_entry = @formatting[fmt_index]
+      fmt_elem = fmt_entry.node
+      fmt_stack_index = -1
+      i = @open.size - 1
+      while i >= 0
+        if @open[i] == fmt_elem
+          fmt_stack_index = i
+          break
+        end
+        i = i - 1
+      end
+      if fmt_stack_index < 0
+        remove_formatting_at(fmt_index)
+        return
+      end
+      return unless in_scope_node(SCOPE_DEFAULT, fmt_elem)
+      furthest_index = -1
+      i = fmt_stack_index
+      while i < @open.size
+        if special?(@open[i])
+          furthest_index = i
+          break
+        end
+        i = i + 1
+      end
+      if furthest_index < 0
+        truncate_open(fmt_stack_index)
+        remove_formatting_at(fmt_index)
+        return
+      end
+      furthest_block = @open[furthest_index]
+      common_ancestor = @open[fmt_stack_index - 1]
+      bookmark_replace = true
+      bookmark = fmt_elem
+      node_index = furthest_index
+      last_node = furthest_block
+      inner_counter = 0
+      while true
+        inner_counter = inner_counter + 1
+        node_index = node_index - 1
+        node = @open[node_index]
+        break if node == fmt_elem
+        if inner_counter > 3
+          position = position_in_active_formatting(node)
+          remove_formatting_at(position) if position >= 0
+          remove_open_at(node_index)
+          next
+        end
+        node_formatting_index = position_in_active_formatting(node)
+        if node_formatting_index < 0
+          remove_open_at(node_index)
+          next
+        end
+        entry = @formatting[node_formatting_index]
+        new_element = create_element(Namespace::Html, entry.name, entry.tag, entry.attrs_start, entry.attrs_count)
+        @open[node_index] = new_element
+        @formatting[node_formatting_index] = FormatEntry.new(new_element, entry.name, entry.tag,
+          entry.attrs_start, entry.attrs_count)
+        node = new_element
+        if last_node == furthest_block
+          bookmark_replace = false
+          bookmark = node
+        end
+        @dom.detach(last_node)
+        @dom.append(node, last_node)
+        last_node = node
+      end
+      @dom.detach(last_node)
+      insert_appropriately(last_node, common_ancestor)
+      new_element = create_element(Namespace::Html, fmt_entry.name, fmt_entry.tag, fmt_entry.attrs_start,
+        fmt_entry.attrs_count)
+      new_entry = FormatEntry.new(new_element, fmt_entry.name, fmt_entry.tag, fmt_entry.attrs_start,
+        fmt_entry.attrs_count)
+      @dom.reparent_children(furthest_block, new_element)
+      @dom.append(furthest_block, new_element)
+      if bookmark_replace
+        @formatting[position_in_active_formatting(bookmark)] = new_entry
+      else
+        index = position_in_active_formatting(bookmark) + 1
+        insert_formatting_at(index, new_entry)
+        remove_formatting_at(position_in_active_formatting(fmt_elem))
+      end
+      remove_from_stack(fmt_elem)
+      i = 0
+      while i < @open.size
+        if @open[i] == furthest_block
+          insert_open_at(i + 1, new_element)
+          break
+        end
+        i = i + 1
+      end
+    end
+  end
+
+  private def subject_name(subject : Tag) : Tape::String
+    case subject
+    when Tag::A      then "a".as_tape
+    when Tag::B      then "b".as_tape
+    when Tag::Big    then "big".as_tape
+    when Tag::Code   then "code".as_tape
+    when Tag::Em     then "em".as_tape
+    when Tag::Font   then "font".as_tape
+    when Tag::I      then "i".as_tape
+    when Tag::Nobr   then "nobr".as_tape
+    when Tag::S      then "s".as_tape
+    when Tag::Small  then "small".as_tape
+    when Tag::Strike then "strike".as_tape
+    when Tag::Strong then "strong".as_tape
+    when Tag::Tt     then "tt".as_tape
+    else                  "u".as_tape
+    end
+  end
+
+  private def process_end_tag_in_body(token : Tok) : Nil
+    match_index = -1
+    i = @open.size - 1
+    while i >= 0
+      node = @open[i]
+      if named?(node, token.tag, token.name)
+        match_index = i
+        break
+      end
+      return if special?(node)
+      i = i - 1
+    end
+    return if match_index < 0
+    generate_implied_end_tags(false, token.tag, false)
+    truncate_open(match_index)
+  end
+
+  private def handle_misnested_a_tags : Nil
+    node = NO_NODE
+    i = @formatting.size - 1
+    while i >= 0
+      entry = @formatting[i]
+      break if entry.marker?
+      if @dom.html?(entry.node, Tag::A)
+        node = entry.node
+        break
+      end
+      i = i - 1
+    end
+    return if node == NO_NODE
+    adoption_agency(Tag::A)
+    position = position_in_active_formatting(node)
+    remove_formatting_at(position) if position >= 0
+    remove_from_stack(node)
+  end
+
+  # --- foreign content ------------------------------------------------------
+
+  private def foreign?(token : Tok) : Bool
+    return false if token.kind == TokenKind::EOF
+    return false if @open.empty?
+    current = adjusted_current_node
+    return false if @dom.namespace(current) == Namespace::Html
+    if mathml_text_integration_point?(current)
+      return false if token.kind == TokenKind::Text || token.kind == TokenKind::Null
+      return false if token.start? && token.tag != Tag::Mglyph && token.tag != Tag::Malignmark
+    end
+    if svg_html_integration_point?(current)
+      return false if token.kind == TokenKind::Text || token.kind == TokenKind::Null
+      return false if token.start?
+    end
+    if @dom.namespace(current) == Namespace::MathML && @dom.tag(current) == Tag::AnnotationXml
+      return false if token.start?(Tag::Svg)
+      # html5ever asks the sink, and both sinks say no integration point.
+    end
+    true
+  end
+
+  private def enter_foreign(token : Tok, namespace : Namespace) : Outcome
+    if namespace == Namespace::MathML
+      token = adjust_mathml_attributes(token)
+    else
+      token = adjust_svg_attributes(token)
+    end
+    token = adjust_foreign_attributes(token)
+    if token.self_closing
+      insert_element(false, namespace, token.name, token.tag, token.attrs_start, token.attrs_count)
+      return Outcome::DoneAckSelfClosing
+    end
+    insert_element(true, namespace, token.name, token.tag, token.attrs_start, token.attrs_count)
+    Outcome::Done
+  end
+
+  private def foreign_start_tag(token : Tok) : Outcome
+    namespace = @dom.namespace(adjusted_current_node)
+    if namespace == Namespace::MathML
+      token = adjust_mathml_attributes(token)
+    elsif namespace == Namespace::Svg
+      token = adjust_svg_tag_name(token)
+      token = adjust_svg_attributes(token)
+    end
+    token = adjust_foreign_attributes(token)
+    if token.self_closing
+      insert_element(false, namespace, token.name, token.tag, token.attrs_start, token.attrs_count)
+      return Outcome::DoneAckSelfClosing
+    end
+    insert_element(true, namespace, token.name, token.tag, token.attrs_start, token.attrs_count)
+    Outcome::Done
+  end
+
+  private def adjust_svg_tag_name(token : Tok) : Tok
+    i = 0
+    while i < SVG_TAG_NAMES.size
+      pair = SVG_TAG_NAMES[i]
+      if token.name == pair[0]
+        name = pair[1].as_tape
+        token.name = name
+        token.tag = tag_of(name)
+        return token
+      end
+      i = i + 1
+    end
+    token
+  end
+
+  # The token with its attributes from *table* renamed: (name, new local
+  # name, prefix, namespace).
+  private def adjust_attributes(token : Tok, table : Array(Tuple(String, String, String, UInt8))) : Tok
+    attrs = @dom.attrs
+    changed = false
+    i = 0
+    while i < token.attrs_count
+      changed = true if adjusted(attrs[token.attrs_start + i], table) >= 0
+      i = i + 1
+    end
+    return token unless changed
+    start = attrs.size
+    i = 0
+    while i < token.attrs_count
+      attr = attrs[token.attrs_start + i]
+      found = adjusted(attr, table)
+      if found >= 0
+        row = table[found]
+        attrs << Attr.new(row[1].as_tape, attr.value, row[2].as_tape, row[3])
+      else
+        attrs << attr
+      end
+      i = i + 1
+    end
+    token.attrs_start = start
+    token
+  end
+
+  private def adjusted(attr : Attr, table : Array(Tuple(String, String, String, UInt8))) : Int32
+    return -1 unless attr.namespace == 0_u8 && attr.prefix.empty?
+    i = 0
+    while i < table.size
+      return i if attr.name == table[i][0]
+      i = i + 1
+    end
+    -1
+  end
+
+  private def adjust_svg_attributes(token : Tok) : Tok
+    adjust_attributes(token, SVG_ATTRIBUTES)
+  end
+
+  private def adjust_mathml_attributes(token : Tok) : Tok
+    adjust_attributes(token, MATHML_ATTRIBUTES)
+  end
+
+  private def adjust_foreign_attributes(token : Tok) : Tok
+    adjust_attributes(token, FOREIGN_ATTRIBUTES)
+  end
+
+  private def unexpected_start_tag_in_foreign_content(token : Tok) : Outcome
+    while true
+      node = current_node
+      break if @dom.namespace(node) == Namespace::Html
+      break if mathml_text_integration_point?(node) || svg_html_integration_point?(node)
+      pop
+    end
+    step(@mode, token)
+  end
+
+  private def step_foreign(token : Tok) : Outcome
+    case token.kind
+    when TokenKind::Null
+      return append_text("\u{fffd}".as_tape)
+    when TokenKind::Text
+      @frameset_ok = false if any_not_whitespace(token.text)
+      return append_text(token.text)
+    when TokenKind::Comment
+      return append_comment(token.text)
+    when TokenKind::StartTag
+      case token.tag
+      when Tag::B, Tag::Big, Tag::Blockquote, Tag::Body, Tag::Br, Tag::Center, Tag::Code, Tag::Dd, Tag::Div,
+           Tag::Dl, Tag::Dt, Tag::Em, Tag::Embed, Tag::H1, Tag::H2, Tag::H3, Tag::H4, Tag::H5, Tag::H6,
+           Tag::Head, Tag::Hr, Tag::I, Tag::Img, Tag::Li, Tag::Listing, Tag::Menu, Tag::Meta, Tag::Nobr,
+           Tag::Ol, Tag::P, Tag::Pre, Tag::Ruby, Tag::S, Tag::Small, Tag::Span, Tag::Strong, Tag::Strike,
+           Tag::Sub, Tag::Sup, Tag::Table, Tag::Tt, Tag::U, Tag::Ul, Tag::Var
+        return unexpected_start_tag_in_foreign_content(token)
+      when Tag::Font
+        if has_attr?(token, "color") || has_attr?(token, "face") || has_attr?(token, "size")
+          return unexpected_start_tag_in_foreign_content(token)
+        end
+        return foreign_start_tag(token)
+      else
+        return foreign_start_tag(token)
+      end
+    when TokenKind::EndTag
+      if token.tag == Tag::Br || token.tag == Tag::P
+        return unexpected_start_tag_in_foreign_content(token)
+      end
+      first = true
+      stack_index = @open.size - 1
+      while true
+        return Outcome::Done if stack_index == 0
+        node = @open[stack_index]
+        html = @dom.namespace(node) == Namespace::Html
+        if !first && html
+          return step(@mode, token)
+        end
+        if eq_ignore_ascii_case(@dom.name(node), token.name)
+          truncate_open(stack_index)
+          return Outcome::Done
+        end
+        first = false
+        stack_index = stack_index - 1
+      end
+    end
+    raise "htmlparse: impossible case in foreign content"
+  end
+
+  # --- the insertion modes ------------------------------------------------
+
+  private def step(mode : InsertionMode, token : Tok) : Outcome
+    case mode
+    when InsertionMode::Initial         then initial(token)
+    when InsertionMode::BeforeHtml      then before_html(token)
+    when InsertionMode::BeforeHead      then before_head(token)
+    when InsertionMode::InHead          then in_head(token)
+    when InsertionMode::InHeadNoscript  then in_head_noscript(token)
+    when InsertionMode::AfterHead       then after_head(token)
+    when InsertionMode::InBody          then in_body(token)
+    when InsertionMode::Text            then text_mode(token)
+    when InsertionMode::InTable         then in_table(token)
+    when InsertionMode::InTableText     then in_table_text(token)
+    when InsertionMode::InCaption       then in_caption(token)
+    when InsertionMode::InColumnGroup   then in_column_group(token)
+    when InsertionMode::InTableBody     then in_table_body(token)
+    when InsertionMode::InRow           then in_row(token)
+    when InsertionMode::InCell          then in_cell(token)
+    when InsertionMode::InSelect        then in_select(token)
+    when InsertionMode::InSelectInTable then in_select_in_table(token)
+    when InsertionMode::InTemplate      then in_template(token)
+    when InsertionMode::AfterBody       then after_body(token)
+    when InsertionMode::InFrameset      then in_frameset(token)
+    when InsertionMode::AfterFrameset   then after_frameset(token)
+    when InsertionMode::AfterAfterBody  then after_after_body(token)
+    else                                     after_after_frameset(token)
+    end
+  end
+
+  # Text not yet split at its whitespace is split first; whitespace is
+  # Whitespace or NotWhitespace after.
+  private def unsplit?(token : Tok) : Bool
+    token.kind == TokenKind::Text && token.split == Split::NotSplit
+  end
+
+  private def whitespace?(token : Tok) : Bool
+    token.kind == TokenKind::Text && token.split == Split::Whitespace
+  end
+
+  private def initial(token : Tok) : Outcome
+    return split_whitespace(token) if unsplit?(token)
+    return Outcome::Done if whitespace?(token)
+    return append_comment_to_doc(token.text) if token.kind == TokenKind::Comment
+    @quirks_mode = QuirksMode::Quirks
+    reprocess(InsertionMode::BeforeHtml, token)
+  end
+
+  private def before_html(token : Tok) : Outcome
+    return split_whitespace(token) if unsplit?(token)
+    return Outcome::Done if whitespace?(token)
+    return append_comment_to_doc(token.text) if token.kind == TokenKind::Comment
+    if token.start?(Tag::Html)
+      create_root(token.attrs_start, token.attrs_count)
+      @mode = InsertionMode::BeforeHead
+      return Outcome::Done
+    end
+    if token.end? && !(token.tag == Tag::Head || token.tag == Tag::Body || token.tag == Tag::Html ||
+       token.tag == Tag::Br)
+      return Outcome::Done
+    end
+    create_root(@dom.attrs.size, 0)
+    reprocess(InsertionMode::BeforeHead, token)
+  end
+
+  private def before_head(token : Tok) : Outcome
+    return split_whitespace(token) if unsplit?(token)
+    return Outcome::Done if whitespace?(token)
+    return append_comment(token.text) if token.kind == TokenKind::Comment
+    return step(InsertionMode::InBody, token) if token.start?(Tag::Html)
+    if token.start?(Tag::Head)
+      @head_elem = insert_element_for(token)
+      @mode = InsertionMode::InHead
+      return Outcome::Done
+    end
+    if token.end? && !(token.tag == Tag::Head || token.tag == Tag::Body || token.tag == Tag::Html ||
+       token.tag == Tag::Br)
+      return Outcome::Done
+    end
+    @head_elem = insert_phantom("head")
+    reprocess(InsertionMode::InHead, token)
+  end
+
+  private def in_head(token : Tok) : Outcome
+    return split_whitespace(token) if unsplit?(token)
+    return append_text(token.text) if whitespace?(token)
+    return append_comment(token.text) if token.kind == TokenKind::Comment
+    if token.start?
+      case token.tag
+      when Tag::Html
+        return step(InsertionMode::InBody, token)
+      when Tag::Base, Tag::Basefont, Tag::Bgsound, Tag::Link, Tag::Meta
+        insert_and_pop_element_for(token)
+        return Outcome::DoneAckSelfClosing
+      when Tag::Title
+        return parse_raw_data(token, RawKind::Rcdata)
+      when Tag::Noframes, Tag::Style, Tag::Noscript
+        if !@scripting && token.tag == Tag::Noscript
+          insert_element_for(token)
+          @mode = InsertionMode::InHeadNoscript
+          return Outcome::Done
+        end
+        return parse_raw_data(token, RawKind::Rawtext)
+      when Tag::Script
+        node = create_element(Namespace::Html, "script".as_tape, Tag::Script, token.attrs_start, token.attrs_count)
+        insert_appropriately(node, NO_NODE)
+        push(node)
+        return to_raw_text_mode(RawKind::ScriptData)
+      when Tag::Template
+        push_marker
+        @frameset_ok = false
+        @mode = InsertionMode::InTemplate
+        @template_modes << InsertionMode::InTemplate
+        insert_element_for(token)
+        return Outcome::Done
+      when Tag::Head
+        return Outcome::Done
+      end
+    end
+    if token.end?
+      case token.tag
+      when Tag::Head
+        pop
+        @mode = InsertionMode::AfterHead
+        return Outcome::Done
+      when Tag::Body, Tag::Html, Tag::Br
+        # anything else
+      when Tag::Template
+        if in_html_elem_named(Tag::Template)
+          generate_implied_end_tags(true, Tag::Other, false)
+          expect_to_close(Tag::Template)
+          clear_active_formatting_to_marker
+          @template_modes.pop
+          @mode = reset_insertion_mode
+        end
+        return Outcome::Done
+      else
+        return Outcome::Done
+      end
+    end
+    pop
+    reprocess(InsertionMode::AfterHead, token)
+  end
+
+  private def in_head_noscript(token : Tok) : Outcome
+    return step(InsertionMode::InBody, token) if token.start?(Tag::Html)
+    if token.end?(Tag::Noscript)
+      pop
+      @mode = InsertionMode::InHead
+      return Outcome::Done
+    end
+    return split_whitespace(token) if unsplit?(token)
+    return step(InsertionMode::InHead, token) if whitespace?(token)
+    return step(InsertionMode::InHead, token) if token.kind == TokenKind::Comment
+    if token.start?
+      case token.tag
+      when Tag::Basefont, Tag::Bgsound, Tag::Link, Tag::Meta, Tag::Noframes, Tag::Style
+        return step(InsertionMode::InHead, token)
+      when Tag::Head, Tag::Noscript
+        return Outcome::Done
+      end
+    end
+    return Outcome::Done if token.end? && token.tag != Tag::Br
+    pop
+    reprocess(InsertionMode::InHead, token)
+  end
+
+  private def after_head(token : Tok) : Outcome
+    return split_whitespace(token) if unsplit?(token)
+    return append_text(token.text) if whitespace?(token)
+    return append_comment(token.text) if token.kind == TokenKind::Comment
+    if token.start?
+      case token.tag
+      when Tag::Html
+        return step(InsertionMode::InBody, token)
+      when Tag::Body
+        insert_element_for(token)
+        @frameset_ok = false
+        @mode = InsertionMode::InBody
+        return Outcome::Done
+      when Tag::Frameset
+        insert_element_for(token)
+        @mode = InsertionMode::InFrameset
+        return Outcome::Done
+      when Tag::Base, Tag::Basefont, Tag::Bgsound, Tag::Link, Tag::Meta, Tag::Noframes, Tag::Script,
+           Tag::Style, Tag::Template, Tag::Title
+        head = @head_elem
+        push(head)
+        outcome = step(InsertionMode::InHead, token)
+        remove_from_stack(head)
+        return outcome
+      when Tag::Head
+        return Outcome::Done
+      end
+    end
+    if token.end?
+      case token.tag
+      when Tag::Template
+        return step(InsertionMode::InHead, token)
+      when Tag::Body, Tag::Html, Tag::Br
+        # anything else
+      else
+        return Outcome::Done
+      end
+    end
+    insert_phantom("body")
+    reprocess(InsertionMode::InBody, token)
+  end
+
+  private def in_body(token : Tok) : Outcome
+    case token.kind
+    when TokenKind::Null
+      return Outcome::Done
+    when TokenKind::Text
+      reconstruct_active_formatting_elements
+      @frameset_ok = false if any_not_whitespace(token.text)
+      return append_text(token.text)
+    when TokenKind::Comment
+      return append_comment(token.text)
+    when TokenKind::EOF
+      return step(InsertionMode::InTemplate, token) unless @template_modes.empty?
+      return Outcome::Done
+    when TokenKind::StartTag
+      return in_body_start_tag(token)
+    else
+      return in_body_end_tag(token)
+    end
+  end
+
+  private def in_body_start_tag(token : Tok) : Outcome
+    case token.tag
+    when Tag::Html
+      unless in_html_elem_named(Tag::Template)
+        @dom.add_attrs_if_missing(html_elem, token.attrs_start, token.attrs_count)
+      end
+      Outcome::Done
+    when Tag::Base, Tag::Basefont, Tag::Bgsound, Tag::Link, Tag::Meta, Tag::Noframes, Tag::Script, Tag::Style,
+         Tag::Template, Tag::Title
+      step(InsertionMode::InHead, token)
+    when Tag::Body
+      body = body_elem
+      if body != NO_NODE && @open.size != 1 && !in_html_elem_named(Tag::Template)
+        @frameset_ok = false
+        @dom.add_attrs_if_missing(body, token.attrs_start, token.attrs_count)
+      end
+      Outcome::Done
+    when Tag::Frameset
+      return Outcome::Done unless @frameset_ok
+      body = body_elem
+      return Outcome::Done if body == NO_NODE
+      @dom.detach(body)
+      truncate_open(1)
+      insert_element_for(token)
+      @mode = InsertionMode::InFrameset
+      Outcome::Done
+    when Tag::Address, Tag::Article, Tag::Aside, Tag::Blockquote, Tag::Center, Tag::Details, Tag::Dialog,
+         Tag::Dir, Tag::Div, Tag::Dl, Tag::Fieldset, Tag::Figcaption, Tag::Figure, Tag::Footer, Tag::Header,
+         Tag::Hgroup, Tag::Main, Tag::Nav, Tag::Ol, Tag::P, Tag::Search, Tag::Section, Tag::Summary, Tag::Ul,
+         Tag::Menu
+      close_p_element_in_button_scope
+      insert_element_for(token)
+      Outcome::Done
+    when Tag::H1, Tag::H2, Tag::H3, Tag::H4, Tag::H5, Tag::H6
+      close_p_element_in_button_scope
+      pop if current_node_in(SET_HEADING)
+      insert_element_for(token)
+      Outcome::Done
+    when Tag::Pre, Tag::Listing
+      close_p_element_in_button_scope
+      insert_element_for(token)
+      @ignore_lf = true
+      @frameset_ok = false
+      Outcome::Done
+    when Tag::Form
+      if @form_elem == NO_NODE || in_html_elem_named(Tag::Template)
+        close_p_element_in_button_scope
+        node = insert_element_for(token)
+        @form_elem = node unless in_html_elem_named(Tag::Template)
+      end
+      Outcome::Done
+    when Tag::Li, Tag::Dd, Tag::Dt
+      list = token.tag == Tag::Li
+      @frameset_ok = false
+      to_close = Tag::Other
+      i = @open.size - 1
+      while i >= 0
+        node = @open[i]
+        tag = html_tag(node)
+        can_close = list ? tag == Tag::Li : (tag == Tag::Dd || tag == Tag::Dt)
+        if can_close
+          to_close = tag
+          break
+        end
+        break if special?(node) && !(tag == Tag::Address || tag == Tag::Div || tag == Tag::P)
+        i = i - 1
+      end
+      if to_close != Tag::Other
+        generate_implied_end_tags(false, to_close, false)
+        expect_to_close(to_close)
+      end
+      close_p_element_in_button_scope
+      insert_element_for(token)
+      Outcome::Done
+    when Tag::Plaintext
+      close_p_element_in_button_scope
+      insert_element_for(token)
+      Outcome::ToPlaintext
+    when Tag::Button
+      if in_scope_named(SCOPE_DEFAULT, Tag::Button)
+        generate_implied_end_tags
+        pop_until_named(Tag::Button)
+      end
+      reconstruct_active_formatting_elements
+      insert_element_for(token)
+      @frameset_ok = false
+      Outcome::Done
+    when Tag::A
+      handle_misnested_a_tags
+      reconstruct_active_formatting_elements
+      create_formatting_element_for(token)
+      Outcome::Done
+    when Tag::B, Tag::Big, Tag::Code, Tag::Em, Tag::Font, Tag::I, Tag::S, Tag::Small, Tag::Strike, Tag::Strong,
+         Tag::Tt, Tag::U
+      reconstruct_active_formatting_elements
+      create_formatting_element_for(token)
+      Outcome::Done
+    when Tag::Nobr
+      reconstruct_active_formatting_elements
+      if in_scope_named(SCOPE_DEFAULT, Tag::Nobr)
+        adoption_agency(Tag::Nobr)
+        reconstruct_active_formatting_elements
+      end
+      create_formatting_element_for(token)
+      Outcome::Done
+    when Tag::Applet, Tag::Marquee, Tag::Object
+      reconstruct_active_formatting_elements
+      insert_element_for(token)
+      push_marker
+      @frameset_ok = false
+      Outcome::Done
+    when Tag::Table
+      close_p_element_in_button_scope if @quirks_mode != QuirksMode::Quirks
+      insert_element_for(token)
+      @frameset_ok = false
+      @mode = InsertionMode::InTable
+      Outcome::Done
+    when Tag::Area, Tag::Br, Tag::Embed, Tag::Img, Tag::Keygen, Tag::Wbr, Tag::Input
+      keep_frameset_ok = token.tag == Tag::Input && is_type_hidden(token)
+      reconstruct_active_formatting_elements
+      insert_and_pop_element_for(token)
+      @frameset_ok = false unless keep_frameset_ok
+      Outcome::DoneAckSelfClosing
+    when Tag::Param, Tag::Source, Tag::Track
+      insert_and_pop_element_for(token)
+      Outcome::DoneAckSelfClosing
+    when Tag::Hr
+      close_p_element_in_button_scope
+      insert_and_pop_element_for(token)
+      @frameset_ok = false
+      Outcome::DoneAckSelfClosing
+    when Tag::Image
+      token.name = "img".as_tape
+      token.tag = Tag::Img
+      step(InsertionMode::InBody, token)
+    when Tag::Textarea
+      @ignore_lf = true
+      @frameset_ok = false
+      parse_raw_data(token, RawKind::Rcdata)
+    when Tag::Xmp
+      close_p_element_in_button_scope
+      reconstruct_active_formatting_elements
+      @frameset_ok = false
+      parse_raw_data(token, RawKind::Rawtext)
+    when Tag::Iframe
+      @frameset_ok = false
+      parse_raw_data(token, RawKind::Rawtext)
+    when Tag::Noembed
+      parse_raw_data(token, RawKind::Rawtext)
+    when Tag::Select
+      reconstruct_active_formatting_elements
+      insert_element_for(token)
+      @frameset_ok = false
+      case @mode
+      when InsertionMode::InTable, InsertionMode::InCaption, InsertionMode::InTableBody, InsertionMode::InRow,
+           InsertionMode::InCell
+        @mode = InsertionMode::InSelectInTable
+      else
+        @mode = InsertionMode::InSelect
+      end
+      Outcome::Done
+    when Tag::Optgroup, Tag::Option
+      pop if current_node_named(Tag::Option)
+      reconstruct_active_formatting_elements
+      insert_element_for(token)
+      Outcome::Done
+    when Tag::Rb, Tag::Rtc
+      generate_implied_end_tags if in_scope_named(SCOPE_DEFAULT, Tag::Ruby)
+      insert_element_for(token)
+      Outcome::Done
+    when Tag::Rp, Tag::Rt
+      generate_implied_end_tags(false, Tag::Rtc, false) if in_scope_named(SCOPE_DEFAULT, Tag::Ruby)
+      insert_element_for(token)
+      Outcome::Done
+    when Tag::Math
+      reconstruct_active_formatting_elements
+      enter_foreign(token, Namespace::MathML)
+    when Tag::Svg
+      reconstruct_active_formatting_elements
+      enter_foreign(token, Namespace::Svg)
+    when Tag::Caption, Tag::Col, Tag::Colgroup, Tag::Frame, Tag::Head, Tag::Tbody, Tag::Td, Tag::Tfoot, Tag::Th,
+         Tag::Thead, Tag::Tr
+      Outcome::Done
+    else
+      if @scripting && token.tag == Tag::Noscript
+        return parse_raw_data(token, RawKind::Rawtext)
+      end
+      reconstruct_active_formatting_elements
+      insert_element_for(token)
+      Outcome::Done
+    end
+  end
+
+  private def in_body_end_tag(token : Tok) : Outcome
+    case token.tag
+    when Tag::Template
+      step(InsertionMode::InHead, token)
+    when Tag::Body
+      @mode = InsertionMode::AfterBody if in_scope_named(SCOPE_DEFAULT, Tag::Body)
+      Outcome::Done
+    when Tag::Html
+      return reprocess(InsertionMode::AfterBody, token) if in_scope_named(SCOPE_DEFAULT, Tag::Body)
+      Outcome::Done
+    when Tag::Address, Tag::Article, Tag::Aside, Tag::Blockquote, Tag::Button, Tag::Center, Tag::Details,
+         Tag::Dialog, Tag::Dir, Tag::Div, Tag::Dl, Tag::Fieldset, Tag::Figcaption, Tag::Figure, Tag::Footer,
+         Tag::Header, Tag::Hgroup, Tag::Listing, Tag::Main, Tag::Menu, Tag::Nav, Tag::Ol, Tag::Pre,
+         Tag::Search, Tag::Section, Tag::Summary, Tag::Ul
+      if in_scope_named(SCOPE_DEFAULT, token.tag)
+        generate_implied_end_tags
+        expect_to_close(token.tag)
+      end
+      Outcome::Done
+    when Tag::Form
+      if !in_html_elem_named(Tag::Template)
+        node = @form_elem
+        @form_elem = NO_NODE
+        return Outcome::Done if node == NO_NODE
+        return Outcome::Done unless in_scope_node(SCOPE_DEFAULT, node)
+        generate_implied_end_tags
+        remove_from_stack(node)
+      else
+        return Outcome::Done unless in_scope_named(SCOPE_DEFAULT, Tag::Form)
+        generate_implied_end_tags
+        pop_until_named(Tag::Form)
+      end
+      Outcome::Done
+    when Tag::P
+      insert_phantom("p") unless in_scope_named(SCOPE_BUTTON, Tag::P)
+      close_p_element
+      Outcome::Done
+    when Tag::Li, Tag::Dd, Tag::Dt
+      in_scope = token.tag == Tag::Li ? in_scope_named(SCOPE_LIST_ITEM, token.tag) : in_scope_named(SCOPE_DEFAULT, token.tag)
+      if in_scope
+        generate_implied_end_tags(false, token.tag, false)
+        expect_to_close(token.tag)
+      end
+      Outcome::Done
+    when Tag::H1, Tag::H2, Tag::H3, Tag::H4, Tag::H5, Tag::H6
+      if in_scope_set(SCOPE_DEFAULT, SET_HEADING)
+        generate_implied_end_tags
+        pop_until_set(SET_HEADING)
+      end
+      Outcome::Done
+    when Tag::A, Tag::B, Tag::Big, Tag::Code, Tag::Em, Tag::Font, Tag::I, Tag::Nobr, Tag::S, Tag::Small,
+         Tag::Strike, Tag::Strong, Tag::Tt, Tag::U
+      adoption_agency(token.tag)
+      Outcome::Done
+    when Tag::Applet, Tag::Marquee, Tag::Object
+      if in_scope_named(SCOPE_DEFAULT, token.tag)
+        generate_implied_end_tags
+        expect_to_close(token.tag)
+        clear_active_formatting_to_marker
+      end
+      Outcome::Done
+    when Tag::Br
+      start = Tok.new(TokenKind::StartTag, Split::NotSplit, @empty, token.name, token.tag, @dom.attrs.size, 0,
+        token.self_closing)
+      step(InsertionMode::InBody, start)
+    else
+      process_end_tag_in_body(token)
+      Outcome::Done
+    end
+  end
+
+  private def text_mode(token : Tok) : Outcome
+    case token.kind
+    when TokenKind::Text
+      append_text(token.text)
+    when TokenKind::EOF
+      pop
+      reprocess(@orig_mode, token)
+    when TokenKind::EndTag
+      node = pop
+      @mode = @orig_mode
+      return Outcome::Script if token.tag == Tag::Script
+      Outcome::Done
+    else
+      raise "htmlparse: impossible case in Text mode"
+    end
+  end
+
+  private def in_table(token : Tok) : Outcome
+    case token.kind
+    when TokenKind::Null, TokenKind::Text
+      return process_chars_in_table(token)
+    when TokenKind::Comment
+      return append_comment(token.text)
+    when TokenKind::EOF
+      return step(InsertionMode::InBody, token)
+    when TokenKind::StartTag
+      case token.tag
+      when Tag::Caption
+        pop_until_current(SET_TABLE_SCOPE)
+        push_marker
+        insert_element_for(token)
+        @mode = InsertionMode::InCaption
+        return Outcome::Done
+      when Tag::Colgroup
+        pop_until_current(SET_TABLE_SCOPE)
+        insert_element_for(token)
+        @mode = InsertionMode::InColumnGroup
+        return Outcome::Done
+      when Tag::Col
+        pop_until_current(SET_TABLE_SCOPE)
+        insert_phantom("colgroup")
+        return reprocess(InsertionMode::InColumnGroup, token)
+      when Tag::Tbody, Tag::Tfoot, Tag::Thead
+        pop_until_current(SET_TABLE_SCOPE)
+        insert_element_for(token)
+        @mode = InsertionMode::InTableBody
+        return Outcome::Done
+      when Tag::Td, Tag::Th, Tag::Tr
+        pop_until_current(SET_TABLE_SCOPE)
+        insert_phantom("tbody")
+        return reprocess(InsertionMode::InTableBody, token)
+      when Tag::Table
+        if in_scope_named(SCOPE_TABLE, Tag::Table)
+          pop_until_named(Tag::Table)
+          return reprocess(reset_insertion_mode, token)
+        end
+        return Outcome::Done
+      when Tag::Style, Tag::Script, Tag::Template
+        return step(InsertionMode::InHead, token)
+      when Tag::Input
+        if is_type_hidden(token)
+          insert_and_pop_element_for(token)
+          return Outcome::DoneAckSelfClosing
+        end
+        return foster_parent_in_body(token)
+      when Tag::Form
+        if !in_html_elem_named(Tag::Template) && @form_elem == NO_NODE
+          @form_elem = insert_and_pop_element_for(token)
+        end
+        return Outcome::Done
+      end
+    else
+      case token.tag
+      when Tag::Table
+        if in_scope_named(SCOPE_TABLE, Tag::Table)
+          pop_until_named(Tag::Table)
+          @mode = reset_insertion_mode
+        end
+        return Outcome::Done
+      when Tag::Body, Tag::Caption, Tag::Col, Tag::Colgroup, Tag::Html, Tag::Tbody, Tag::Td, Tag::Tfoot, Tag::Th,
+           Tag::Thead, Tag::Tr
+        return Outcome::Done
+      when Tag::Template
+        return step(InsertionMode::InHead, token)
+      end
+    end
+    foster_parent_in_body(token)
+  end
+
+  private def in_table_text(token : Tok) : Outcome
+    return Outcome::Done if token.kind == TokenKind::Null
+    if token.kind == TokenKind::Text
+      @pending_table_text << PendingText.new(token.split, token.text)
+      return Outcome::Done
+    end
+    pending = @pending_table_text
+    @pending_table_text = Tape::Array(PendingText).new
+    contains_nonspace = pending.any? do |entry|
+      case entry.split
+      when Split::Whitespace    then false
+      when Split::NotWhitespace then true
+      else                           any_not_whitespace(entry.text)
+      end
+    end
+    if contains_nonspace
+      pending.each do |entry|
+        foster_parent_in_body(Tok.new(TokenKind::Text, entry.split, entry.text, @empty, Tag::Other, 0, 0, false))
+      end
+    else
+      pending.each { |entry| append_text(entry.text) }
+    end
+    reprocess(@orig_mode, token)
+  end
+
+  private def in_caption(token : Tok) : Outcome
+    closes = false
+    if token.start?
+      case token.tag
+      when Tag::Caption, Tag::Col, Tag::Colgroup, Tag::Tbody, Tag::Td, Tag::Tfoot, Tag::Th, Tag::Thead, Tag::Tr
+        closes = true
+      end
+    elsif token.end?
+      case token.tag
+      when Tag::Table, Tag::Caption
+        closes = true
+      when Tag::Body, Tag::Col, Tag::Colgroup, Tag::Html, Tag::Tbody, Tag::Td, Tag::Tfoot, Tag::Th, Tag::Thead,
+           Tag::Tr
+        return Outcome::Done
+      end
+    end
+    return step(InsertionMode::InBody, token) unless closes
+    if in_scope_named(SCOPE_TABLE, Tag::Caption)
+      generate_implied_end_tags
+      expect_to_close(Tag::Caption)
+      clear_active_formatting_to_marker
+      if token.end?(Tag::Caption)
+        @mode = InsertionMode::InTable
+        return Outcome::Done
+      end
+      return reprocess(InsertionMode::InTable, token)
+    end
+    Outcome::Done
+  end
+
+  private def in_column_group(token : Tok) : Outcome
+    return split_whitespace(token) if unsplit?(token)
+    return append_text(token.text) if whitespace?(token)
+    return append_comment(token.text) if token.kind == TokenKind::Comment
+    return step(InsertionMode::InBody, token) if token.start?(Tag::Html)
+    if token.start?(Tag::Col)
+      insert_and_pop_element_for(token)
+      return Outcome::DoneAckSelfClosing
+    end
+    if token.end?(Tag::Colgroup)
+      if current_node_named(Tag::Colgroup)
+        pop
+        @mode = InsertionMode::InTable
+      end
+      return Outcome::Done
+    end
+    return Outcome::Done if token.end?(Tag::Col)
+    return step(InsertionMode::InHead, token) if token.start?(Tag::Template) || token.end?(Tag::Template)
+    return step(InsertionMode::InBody, token) if token.kind == TokenKind::EOF
+    if current_node_named(Tag::Colgroup)
+      pop
+      return reprocess(InsertionMode::InTable, token)
+    end
+    Outcome::Done
+  end
+
+  private def in_table_body(token : Tok) : Outcome
+    if token.start?
+      case token.tag
+      when Tag::Tr
+        pop_until_current(SET_TABLE_BODY_CTX)
+        insert_element_for(token)
+        @mode = InsertionMode::InRow
+        return Outcome::Done
+      when Tag::Th, Tag::Td
+        pop_until_current(SET_TABLE_BODY_CTX)
+        insert_phantom("tr")
+        return reprocess(InsertionMode::InRow, token)
+      when Tag::Caption, Tag::Col, Tag::Colgroup, Tag::Tbody, Tag::Tfoot, Tag::Thead
+        return table_body_close_and_reprocess(token)
+      end
+    elsif token.end?
+      case token.tag
+      when Tag::Tbody, Tag::Tfoot, Tag::Thead
+        if in_scope_named(SCOPE_TABLE, token.tag)
+          pop_until_current(SET_TABLE_BODY_CTX)
+          pop
+          @mode = InsertionMode::InTable
+        end
+        return Outcome::Done
+      when Tag::Table
+        return table_body_close_and_reprocess(token)
+      when Tag::Body, Tag::Caption, Tag::Col, Tag::Colgroup, Tag::Html, Tag::Td, Tag::Th, Tag::Tr
+        return Outcome::Done
+      end
+    end
+    step(InsertionMode::InTable, token)
+  end
+
+  private def table_body_close_and_reprocess(token : Tok) : Outcome
+    if in_scope_set(SCOPE_TABLE, SET_TABLE_BODY_OUTER)
+      pop_until_current(SET_TABLE_BODY_CTX)
+      pop
+      return reprocess(InsertionMode::InTable, token)
+    end
+    Outcome::Done
+  end
+
+  private def in_row(token : Tok) : Outcome
+    if token.start?
+      case token.tag
+      when Tag::Th, Tag::Td
+        pop_until_current(SET_TABLE_ROW_CTX)
+        insert_element_for(token)
+        @mode = InsertionMode::InCell
+        push_marker
+        return Outcome::Done
+      when Tag::Caption, Tag::Col, Tag::Colgroup, Tag::Tbody, Tag::Tfoot, Tag::Thead, Tag::Tr
+        return row_close_and_reprocess(token)
+      end
+    elsif token.end?
+      case token.tag
+      when Tag::Tr
+        if in_scope_named(SCOPE_TABLE, Tag::Tr)
+          pop_until_current(SET_TABLE_ROW_CTX)
+          pop
+          @mode = InsertionMode::InTableBody
+        end
+        return Outcome::Done
+      when Tag::Table
+        return row_close_and_reprocess(token)
+      when Tag::Tbody, Tag::Tfoot, Tag::Thead
+        if in_scope_named(SCOPE_TABLE, token.tag)
+          if in_scope_named(SCOPE_TABLE, Tag::Tr)
+            pop_until_current(SET_TABLE_ROW_CTX)
+            pop
+            return reprocess(InsertionMode::InTableBody, token)
+          end
+        end
+        return Outcome::Done
+      when Tag::Body, Tag::Caption, Tag::Col, Tag::Colgroup, Tag::Html, Tag::Td, Tag::Th
+        return Outcome::Done
+      end
+    end
+    step(InsertionMode::InTable, token)
+  end
+
+  private def row_close_and_reprocess(token : Tok) : Outcome
+    if in_scope_named(SCOPE_TABLE, Tag::Tr)
+      pop_until_current(SET_TABLE_ROW_CTX)
+      pop
+      return reprocess(InsertionMode::InTableBody, token)
+    end
+    Outcome::Done
+  end
+
+  private def in_cell(token : Tok) : Outcome
+    if token.end?
+      case token.tag
+      when Tag::Td, Tag::Th
+        if in_scope_named(SCOPE_TABLE, token.tag)
+          generate_implied_end_tags
+          expect_to_close(token.tag)
+          clear_active_formatting_to_marker
+          @mode = InsertionMode::InRow
+        end
+        return Outcome::Done
+      when Tag::Body, Tag::Caption, Tag::Col, Tag::Colgroup, Tag::Html
+        return Outcome::Done
+      when Tag::Table, Tag::Tbody, Tag::Tfoot, Tag::Thead, Tag::Tr
+        if in_scope_named(SCOPE_TABLE, token.tag)
+          close_the_cell
+          return reprocess(InsertionMode::InRow, token)
+        end
+        return Outcome::Done
+      end
+    elsif token.start?
+      case token.tag
+      when Tag::Caption, Tag::Col, Tag::Colgroup, Tag::Tbody, Tag::Td, Tag::Tfoot, Tag::Th, Tag::Thead, Tag::Tr
+        if in_scope_set(SCOPE_TABLE, SET_TD_TH)
+          close_the_cell
+          return reprocess(InsertionMode::InRow, token)
+        end
+        return Outcome::Done
+      end
+    end
+    step(InsertionMode::InBody, token)
+  end
+
+  private def in_select(token : Tok) : Outcome
+    case token.kind
+    when TokenKind::Null
+      return Outcome::Done
+    when TokenKind::Text
+      return append_text(token.text)
+    when TokenKind::Comment
+      return append_comment(token.text)
+    when TokenKind::EOF
+      return step(InsertionMode::InBody, token)
+    when TokenKind::StartTag
+      case token.tag
+      when Tag::Html
+        return step(InsertionMode::InBody, token)
+      when Tag::Option
+        pop if current_node_named(Tag::Option)
+        insert_element_for(token)
+        return Outcome::Done
+      when Tag::Optgroup
+        pop if current_node_named(Tag::Option)
+        pop if current_node_named(Tag::Optgroup)
+        insert_element_for(token)
+        return Outcome::Done
+      when Tag::Hr
+        pop if current_node_named(Tag::Option)
+        pop if current_node_named(Tag::Optgroup)
+        insert_element_for(token)
+        pop
+        return Outcome::DoneAckSelfClosing
+      when Tag::Select
+        if in_scope_named(SCOPE_SELECT, Tag::Select)
+          pop_until_named(Tag::Select)
+          @mode = reset_insertion_mode
+        end
+        return Outcome::Done
+      when Tag::Input, Tag::Keygen, Tag::Textarea
+        if in_scope_named(SCOPE_SELECT, Tag::Select)
+          pop_until_named(Tag::Select)
+          return reprocess(reset_insertion_mode, token)
+        end
+        return Outcome::Done
+      when Tag::Script, Tag::Template
+        return step(InsertionMode::InHead, token)
+      end
+    else
+      case token.tag
+      when Tag::Optgroup
+        if @open.size >= 2 && current_node_named(Tag::Option) && @dom.html?(@open[@open.size - 2], Tag::Optgroup)
+          pop
+        end
+        pop if current_node_named(Tag::Optgroup)
+        return Outcome::Done
+      when Tag::Option
+        pop if current_node_named(Tag::Option)
+        return Outcome::Done
+      when Tag::Select
+        if in_scope_named(SCOPE_SELECT, Tag::Select)
+          pop_until_named(Tag::Select)
+          @mode = reset_insertion_mode
+        end
+        return Outcome::Done
+      when Tag::Template
+        return step(InsertionMode::InHead, token)
+      end
+    end
+    Outcome::Done
+  end
+
+  private def in_select_in_table(token : Tok) : Outcome
+    if token.start?
+      case token.tag
+      when Tag::Caption, Tag::Table, Tag::Tbody, Tag::Tfoot, Tag::Thead, Tag::Tr, Tag::Td, Tag::Th
+        pop_until_named(Tag::Select)
+        return reprocess(reset_insertion_mode, token)
+      end
+    elsif token.end?
+      case token.tag
+      when Tag::Caption, Tag::Table, Tag::Tbody, Tag::Tfoot, Tag::Thead, Tag::Tr, Tag::Td, Tag::Th
+        if in_scope_named(SCOPE_TABLE, token.tag)
+          pop_until_named(Tag::Select)
+          return reprocess(reset_insertion_mode, token)
+        end
+        return Outcome::Done
+      end
+    end
+    step(InsertionMode::InSelect, token)
+  end
+
+  private def in_template(token : Tok) : Outcome
+    case token.kind
+    when TokenKind::Text, TokenKind::Comment
+      return step(InsertionMode::InBody, token)
+    when TokenKind::EOF
+      return Outcome::Done unless in_html_elem_named(Tag::Template)
+      pop_until_named(Tag::Template)
+      clear_active_formatting_to_marker
+      @template_modes.pop
+      @mode = reset_insertion_mode
+      return reprocess(reset_insertion_mode, token)
+    when TokenKind::StartTag
+      case token.tag
+      when Tag::Base, Tag::Basefont, Tag::Bgsound, Tag::Link, Tag::Meta, Tag::Noframes, Tag::Script, Tag::Style,
+           Tag::Template, Tag::Title
+        return step(InsertionMode::InHead, token)
+      when Tag::Caption, Tag::Colgroup, Tag::Tbody, Tag::Tfoot, Tag::Thead
+        replace_template_mode(InsertionMode::InTable)
+        return reprocess(InsertionMode::InTable, token)
+      when Tag::Col
+        replace_template_mode(InsertionMode::InColumnGroup)
+        return reprocess(InsertionMode::InColumnGroup, token)
+      when Tag::Tr
+        replace_template_mode(InsertionMode::InTableBody)
+        return reprocess(InsertionMode::InTableBody, token)
+      when Tag::Td, Tag::Th
+        replace_template_mode(InsertionMode::InRow)
+        return reprocess(InsertionMode::InRow, token)
+      else
+        replace_template_mode(InsertionMode::InBody)
+        return reprocess(InsertionMode::InBody, token)
+      end
+    when TokenKind::EndTag
+      return step(InsertionMode::InHead, token) if token.tag == Tag::Template
+    end
+    Outcome::Done
+  end
+
+  private def replace_template_mode(mode : InsertionMode) : Nil
+    @template_modes.pop
+    @template_modes << mode
+  end
+
+  private def after_body(token : Tok) : Outcome
+    return split_whitespace(token) if unsplit?(token)
+    return step(InsertionMode::InBody, token) if whitespace?(token)
+    return append_comment_to_html(token.text) if token.kind == TokenKind::Comment
+    return step(InsertionMode::InBody, token) if token.start?(Tag::Html)
+    if token.end?(Tag::Html)
+      @mode = InsertionMode::AfterAfterBody unless fragment?
+      return Outcome::Done
+    end
+    return Outcome::Done if token.kind == TokenKind::EOF
+    reprocess(InsertionMode::InBody, token)
+  end
+
+  private def in_frameset(token : Tok) : Outcome
+    return split_whitespace(token) if unsplit?(token)
+    return append_text(token.text) if whitespace?(token)
+    return append_comment(token.text) if token.kind == TokenKind::Comment
+    return step(InsertionMode::InBody, token) if token.start?(Tag::Html)
+    if token.start?(Tag::Frameset)
+      insert_element_for(token)
+      return Outcome::Done
+    end
+    if token.end?(Tag::Frameset)
+      if @open.size != 1
+        pop
+        if !fragment? && !current_node_named(Tag::Frameset)
+          @mode = InsertionMode::AfterFrameset
+        end
+      end
+      return Outcome::Done
+    end
+    if token.start?(Tag::Frame)
+      insert_and_pop_element_for(token)
+      return Outcome::DoneAckSelfClosing
+    end
+    return step(InsertionMode::InHead, token) if token.start?(Tag::Noframes)
+    Outcome::Done
+  end
+
+  private def after_frameset(token : Tok) : Outcome
+    return split_whitespace(token) if unsplit?(token)
+    return append_text(token.text) if whitespace?(token)
+    return append_comment(token.text) if token.kind == TokenKind::Comment
+    return step(InsertionMode::InBody, token) if token.start?(Tag::Html)
+    if token.end?(Tag::Html)
+      @mode = InsertionMode::AfterAfterFrameset
+      return Outcome::Done
+    end
+    return step(InsertionMode::InHead, token) if token.start?(Tag::Noframes)
+    Outcome::Done
+  end
+
+  private def after_after_body(token : Tok) : Outcome
+    return split_whitespace(token) if unsplit?(token)
+    return step(InsertionMode::InBody, token) if whitespace?(token)
+    return append_comment_to_doc(token.text) if token.kind == TokenKind::Comment
+    return step(InsertionMode::InBody, token) if token.start?(Tag::Html)
+    return Outcome::Done if token.kind == TokenKind::EOF
+    reprocess(InsertionMode::InBody, token)
+  end
+
+  private def after_after_frameset(token : Tok) : Outcome
+    return split_whitespace(token) if unsplit?(token)
+    return step(InsertionMode::InBody, token) if whitespace?(token)
+    return append_comment_to_doc(token.text) if token.kind == TokenKind::Comment
+    return step(InsertionMode::InBody, token) if token.start?(Tag::Html)
+    return step(InsertionMode::InHead, token) if token.start?(Tag::Noframes)
+    Outcome::Done
+  end
+end
+
+QUIRKY_PUBLIC_PREFIXES = [
+  "-//advasoft ltd//dtd html 3.0 aswedit + extensions//",
+  "-//as//dtd html 3.0 aswedit + extensions//",
+  "-//ietf//dtd html 2.0 level 1//",
+  "-//ietf//dtd html 2.0 level 2//",
+  "-//ietf//dtd html 2.0 strict level 1//",
+  "-//ietf//dtd html 2.0 strict level 2//",
+  "-//ietf//dtd html 2.0 strict//",
+  "-//ietf//dtd html 2.0//",
+  "-//ietf//dtd html 2.1e//",
+  "-//ietf//dtd html 3.0//",
+  "-//ietf//dtd html 3.2 final//",
+  "-//ietf//dtd html 3.2//",
+  "-//ietf//dtd html 3//",
+  "-//ietf//dtd html level 0//",
+  "-//ietf//dtd html level 1//",
+  "-//ietf//dtd html level 2//",
+  "-//ietf//dtd html level 3//",
+  "-//ietf//dtd html strict level 0//",
+  "-//ietf//dtd html strict level 1//",
+  "-//ietf//dtd html strict level 2//",
+  "-//ietf//dtd html strict level 3//",
+  "-//ietf//dtd html strict//",
+  "-//ietf//dtd html//",
+  "-//metrius//dtd metrius presentational//",
+  "-//microsoft//dtd internet explorer 2.0 html strict//",
+  "-//microsoft//dtd internet explorer 2.0 html//",
+  "-//microsoft//dtd internet explorer 2.0 tables//",
+  "-//microsoft//dtd internet explorer 3.0 html strict//",
+  "-//microsoft//dtd internet explorer 3.0 html//",
+  "-//microsoft//dtd internet explorer 3.0 tables//",
+  "-//netscape comm. corp.//dtd html//",
+  "-//netscape comm. corp.//dtd strict html//",
+  "-//o'reilly and associates//dtd html 2.0//",
+  "-//o'reilly and associates//dtd html extended 1.0//",
+  "-//o'reilly and associates//dtd html extended relaxed 1.0//",
+  "-//softquad software//dtd hotmetal pro 6.0::19990601::extensions to html 4.0//",
+  "-//softquad//dtd hotmetal pro 4.0::19971010::extensions to html 4.0//",
+  "-//spyglass//dtd html 2.0 extended//",
+  "-//sq//dtd html 2.0 hotmetal + extensions//",
+  "-//sun microsystems corp.//dtd hotjava html//",
+  "-//sun microsystems corp.//dtd hotjava strict html//",
+  "-//w3c//dtd html 3 1995-03-24//",
+  "-//w3c//dtd html 3.2 draft//",
+  "-//w3c//dtd html 3.2 final//",
+  "-//w3c//dtd html 3.2//",
+  "-//w3c//dtd html 3.2s draft//",
+  "-//w3c//dtd html 4.0 frameset//",
+  "-//w3c//dtd html 4.0 transitional//",
+  "-//w3c//dtd html experimental 19960712//",
+  "-//w3c//dtd html experimental 970421//",
+  "-//w3c//dtd w3 html//",
+  "-//w3o//dtd w3 html 3.0//",
+  "-//webtechs//dtd mozilla html 2.0//",
+  "-//webtechs//dtd mozilla html//",
+]
+
+QUIRKY_PUBLIC_MATCHES = [
+  "-//w3o//dtd w3 html strict 3.0//en//",
+  "-/w3c/dtd html 4.0 transitional/en",
+  "html",
+]
+
+QUIRKY_SYSTEM_MATCHES = ["http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd"]
+
+LIMITED_QUIRKY_PUBLIC_PREFIXES = [
+  "-//w3c//dtd xhtml 1.0 frameset//",
+  "-//w3c//dtd xhtml 1.0 transitional//",
+]
+
+HTML4_PUBLIC_PREFIXES = [
+  "-//w3c//dtd html 4.01 frameset//",
+  "-//w3c//dtd html 4.01 transitional//",
+]
+
+SVG_TAG_NAMES = [
+  {"altglyph", "altGlyph"},
+  {"altglyphdef", "altGlyphDef"},
+  {"altglyphitem", "altGlyphItem"},
+  {"animatecolor", "animateColor"},
+  {"animatemotion", "animateMotion"},
+  {"animatetransform", "animateTransform"},
+  {"clippath", "clipPath"},
+  {"feblend", "feBlend"},
+  {"fecolormatrix", "feColorMatrix"},
+  {"fecomponenttransfer", "feComponentTransfer"},
+  {"fecomposite", "feComposite"},
+  {"feconvolvematrix", "feConvolveMatrix"},
+  {"fediffuselighting", "feDiffuseLighting"},
+  {"fedisplacementmap", "feDisplacementMap"},
+  {"fedistantlight", "feDistantLight"},
+  {"fedropshadow", "feDropShadow"},
+  {"feflood", "feFlood"},
+  {"fefunca", "feFuncA"},
+  {"fefuncb", "feFuncB"},
+  {"fefuncg", "feFuncG"},
+  {"fefuncr", "feFuncR"},
+  {"fegaussianblur", "feGaussianBlur"},
+  {"feimage", "feImage"},
+  {"femerge", "feMerge"},
+  {"femergenode", "feMergeNode"},
+  {"femorphology", "feMorphology"},
+  {"feoffset", "feOffset"},
+  {"fepointlight", "fePointLight"},
+  {"fespecularlighting", "feSpecularLighting"},
+  {"fespotlight", "feSpotLight"},
+  {"fetile", "feTile"},
+  {"feturbulence", "feTurbulence"},
+  {"foreignobject", "foreignObject"},
+  {"glyphref", "glyphRef"},
+  {"lineargradient", "linearGradient"},
+  {"radialgradient", "radialGradient"},
+  {"textpath", "textPath"},
+]
+
+# (name, local name, prefix, namespace): the namespace as `Namespace`'s
+# value.
+SVG_ATTRIBUTES = [
+  {"attributename", "attributeName", "", 0_u8},
+  {"attributetype", "attributeType", "", 0_u8},
+  {"basefrequency", "baseFrequency", "", 0_u8},
+  {"baseprofile", "baseProfile", "", 0_u8},
+  {"calcmode", "calcMode", "", 0_u8},
+  {"clippathunits", "clipPathUnits", "", 0_u8},
+  {"diffuseconstant", "diffuseConstant", "", 0_u8},
+  {"edgemode", "edgeMode", "", 0_u8},
+  {"filterunits", "filterUnits", "", 0_u8},
+  {"glyphref", "glyphRef", "", 0_u8},
+  {"gradienttransform", "gradientTransform", "", 0_u8},
+  {"gradientunits", "gradientUnits", "", 0_u8},
+  {"kernelmatrix", "kernelMatrix", "", 0_u8},
+  {"kernelunitlength", "kernelUnitLength", "", 0_u8},
+  {"keypoints", "keyPoints", "", 0_u8},
+  {"keysplines", "keySplines", "", 0_u8},
+  {"keytimes", "keyTimes", "", 0_u8},
+  {"lengthadjust", "lengthAdjust", "", 0_u8},
+  {"limitingconeangle", "limitingConeAngle", "", 0_u8},
+  {"markerheight", "markerHeight", "", 0_u8},
+  {"markerunits", "markerUnits", "", 0_u8},
+  {"markerwidth", "markerWidth", "", 0_u8},
+  {"maskcontentunits", "maskContentUnits", "", 0_u8},
+  {"maskunits", "maskUnits", "", 0_u8},
+  {"numoctaves", "numOctaves", "", 0_u8},
+  {"pathlength", "pathLength", "", 0_u8},
+  {"patterncontentunits", "patternContentUnits", "", 0_u8},
+  {"patterntransform", "patternTransform", "", 0_u8},
+  {"patternunits", "patternUnits", "", 0_u8},
+  {"pointsatx", "pointsAtX", "", 0_u8},
+  {"pointsaty", "pointsAtY", "", 0_u8},
+  {"pointsatz", "pointsAtZ", "", 0_u8},
+  {"preservealpha", "preserveAlpha", "", 0_u8},
+  {"preserveaspectratio", "preserveAspectRatio", "", 0_u8},
+  {"primitiveunits", "primitiveUnits", "", 0_u8},
+  {"refx", "refX", "", 0_u8},
+  {"refy", "refY", "", 0_u8},
+  {"repeatcount", "repeatCount", "", 0_u8},
+  {"repeatdur", "repeatDur", "", 0_u8},
+  {"requiredextensions", "requiredExtensions", "", 0_u8},
+  {"requiredfeatures", "requiredFeatures", "", 0_u8},
+  {"specularconstant", "specularConstant", "", 0_u8},
+  {"specularexponent", "specularExponent", "", 0_u8},
+  {"spreadmethod", "spreadMethod", "", 0_u8},
+  {"startoffset", "startOffset", "", 0_u8},
+  {"stddeviation", "stdDeviation", "", 0_u8},
+  {"stitchtiles", "stitchTiles", "", 0_u8},
+  {"surfacescale", "surfaceScale", "", 0_u8},
+  {"systemlanguage", "systemLanguage", "", 0_u8},
+  {"tablevalues", "tableValues", "", 0_u8},
+  {"targetx", "targetX", "", 0_u8},
+  {"targety", "targetY", "", 0_u8},
+  {"textlength", "textLength", "", 0_u8},
+  {"viewbox", "viewBox", "", 0_u8},
+  {"viewtarget", "viewTarget", "", 0_u8},
+  {"xchannelselector", "xChannelSelector", "", 0_u8},
+  {"ychannelselector", "yChannelSelector", "", 0_u8},
+  {"zoomandpan", "zoomAndPan", "", 0_u8},
+]
+
+MATHML_ATTRIBUTES = [{"definitionurl", "definitionURL", "", 0_u8}]
+
+# xlink is `Namespace::XLink` (4), xml `Xml` (5), xmlns `Xmlns` (6).
+FOREIGN_ATTRIBUTES = [
+  {"xlink:actuate", "actuate", "xlink", 4_u8},
+  {"xlink:arcrole", "arcrole", "xlink", 4_u8},
+  {"xlink:href", "href", "xlink", 4_u8},
+  {"xlink:role", "role", "xlink", 4_u8},
+  {"xlink:show", "show", "xlink", 4_u8},
+  {"xlink:title", "title", "xlink", 4_u8},
+  {"xlink:type", "type", "xlink", 4_u8},
+  {"xml:lang", "lang", "xml", 5_u8},
+  {"xml:space", "space", "xml", 5_u8},
+  {"xmlns", "xmlns", "", 6_u8},
+  {"xmlns:xlink", "xlink", "xmlns", 6_u8},
+]

@@ -1,0 +1,1704 @@
+# The HTML tokenizer, ported from html5ever 0.35's (tokenizer/mod.rs and
+# tokenizer/char_ref/mod.rs), the one Campfire's Rust port uses, state for
+# state. It runs over the whole input at once, so where html5ever suspends
+# for more input this one has it already, and the end of the input is the
+# end of the document.
+#
+# It works on bytes: every character the states name is ASCII, and the
+# bytes of any other character are taken one by one into whatever is being
+# read, which keeps them whole. Text, names and values are views of the
+# input where they are its bytes unchanged, and are copied onto the tape
+# only when they differ from it (a name lowercased, a character reference
+# read, a NUL replaced).
+#
+# A carriage return is a line feed by then: `Tokenizer.new` takes the input
+# with "\r\n" and "\r" already turned into "\n" (see `normalize_newlines`).
+module htmlparse/tokenizer
+
+import std/int
+import htmlparse/entities::{lookup, PREFIX}
+
+pub enum TokenKind : UInt8
+  Text
+  # A NUL in the data state, which the tree builder handles apart.
+  Null
+  StartTag
+  EndTag
+  Comment
+  Doctype
+  EOF
+end
+
+pub enum State : UInt8
+  Data
+  Plaintext
+  TagOpen
+  EndTagOpen
+  TagName
+  RawData
+  RawLessThanSign
+  RawEndTagOpen
+  RawEndTagName
+  ScriptDataEscapeStart
+  ScriptDataEscapeStartDash
+  ScriptDataEscapedDash
+  ScriptDataEscapedDashDash
+  ScriptDataDoubleEscapeEnd
+  BeforeAttributeName
+  AttributeName
+  AfterAttributeName
+  BeforeAttributeValue
+  AttributeValueDoubleQuoted
+  AttributeValueSingleQuoted
+  AttributeValueUnquoted
+  AfterAttributeValueQuoted
+  SelfClosingStartTag
+  CommentStart
+  CommentStartDash
+  Comment
+  CommentLessThanSign
+  CommentLessThanSignBang
+  CommentLessThanSignBangDash
+  CommentLessThanSignBangDashDash
+  CommentEndDash
+  CommentEnd
+  CommentEndBang
+  Doctype
+  BeforeDoctypeName
+  DoctypeName
+  AfterDoctypeName
+  AfterDoctypeKeyword
+  BeforeDoctypeIdentifier
+  DoctypeIdentifierDoubleQuoted
+  DoctypeIdentifierSingleQuoted
+  AfterDoctypeIdentifier
+  BetweenDoctypePublicAndSystemIdentifiers
+  BogusDoctype
+  BogusComment
+  MarkupDeclarationOpen
+  CdataSection
+  CdataSectionBracket
+  CdataSectionEnd
+end
+
+# The kind of raw text a `RawData` state and the ones around it read.
+# `Escaped` and `DoubleEscaped` are html5ever's
+# `ScriptDataEscaped(Escaped)` and `ScriptDataEscaped(DoubleEscaped)`.
+pub enum RawKind : UInt8
+  Rcdata
+  Rawtext
+  ScriptData
+  Escaped
+  DoubleEscaped
+end
+
+# An attribute as the tokenizer reads it; the tree builder sets *prefix*
+# and *namespace* on a foreign element's (`xlink:href`).
+@[OnTape]
+pub struct Attr
+  getter name : Tape::String
+  getter value : Tape::String
+  getter prefix : Tape::String
+  getter namespace : UInt8
+
+  def initialize(@name : Tape::String, @value : Tape::String, @prefix : Tape::String, @namespace : UInt8)
+  end
+end
+
+# One token. A tag's attributes are `count` of the tokenizer's `attrs`
+# from `attrs_start`; a doctype's missing name or identifiers are told
+# apart from empty ones by `has_name`, `has_public_id` and
+# `has_system_id`.
+@[OnTape]
+pub struct Token
+  getter kind : TokenKind
+  # The tag's or the doctype's name.
+  getter name : Tape::String
+  # The text's or the comment's.
+  getter text : Tape::String
+  getter attrs_start : Int32
+  getter attrs_count : Int32
+  getter self_closing : Bool
+  getter public_id : Tape::String
+  getter system_id : Tape::String
+  getter has_name : Bool
+  getter has_public_id : Bool
+  getter has_system_id : Bool
+  getter force_quirks : Bool
+
+  def initialize(@kind : TokenKind, @name : Tape::String, @text : Tape::String, @attrs_start : Int32,
+                 @attrs_count : Int32, @self_closing : Bool, @public_id : Tape::String,
+                 @system_id : Tape::String, @has_name : Bool, @has_public_id : Bool,
+                 @has_system_id : Bool, @force_quirks : Bool)
+  end
+end
+
+# Bytes being read into a token: a view of the input while they are its
+# bytes in order, copied into a writer of their own from the first one
+# that is not.
+@[OnTape]
+struct Bytes
+  @input : Tape::String
+  @start : Int32
+  @size : Int32
+  @owned : Bool
+  @writer : Tape::String::Writer
+
+  def initialize(@input : Tape::String)
+    @start = 0
+    @size = 0
+    @owned = false
+    @writer = Tape::String::Writer.new(0)
+  end
+
+  def clear : Nil
+    @size = 0
+    @owned = false
+  end
+
+  def empty? : Bool
+    @owned ? @writer.length == 0 : @size == 0
+  end
+
+  # The input's byte at *at*, next after these or not.
+  def push_input(at : Int32) : Nil
+    if !@owned && (@size == 0 || @start + @size == at)
+      @start = at if @size == 0
+      @size = @size + 1
+    else
+      own
+      @writer.push(@input[at])
+    end
+  end
+
+  # The input's *count* bytes from *at*.
+  def push_input(at : Int32, count : Int32) : Nil
+    return if count == 0
+    if !@owned && (@size == 0 || @start + @size == at)
+      @start = at if @size == 0
+      @size = @size + count
+    else
+      own
+      @writer.append(@input[at, count])
+    end
+  end
+
+  # The input's byte at *at*, as an ASCII capital's small letter.
+  def push_lower(at : Int32) : Nil
+    byte = @input[at]
+    if byte >= 0x41_u8 && byte <= 0x5a_u8
+      push_byte(byte + 0x20_u8)
+    else
+      push_input(at)
+    end
+  end
+
+  def push_byte(byte : UInt8) : Nil
+    own
+    @writer.push(byte)
+  end
+
+  def push_text(text : ::String) : Nil
+    own
+    @writer.append(text)
+  end
+
+  def push_char(code : UInt32) : Nil
+    own
+    if code < 0x80_u32
+      @writer.push(code.to_u8)
+    elsif code < 0x800_u32
+      @writer.push((0xc0_u32 | (code >> 6)).to_u8)
+      @writer.push((0x80_u32 | (code & 0x3f_u32)).to_u8)
+    elsif code < 0x10000_u32
+      @writer.push((0xe0_u32 | (code >> 12)).to_u8)
+      @writer.push((0x80_u32 | ((code >> 6) & 0x3f_u32)).to_u8)
+      @writer.push((0x80_u32 | (code & 0x3f_u32)).to_u8)
+    else
+      @writer.push((0xf0_u32 | (code >> 18)).to_u8)
+      @writer.push((0x80_u32 | ((code >> 12) & 0x3f_u32)).to_u8)
+      @writer.push((0x80_u32 | ((code >> 6) & 0x3f_u32)).to_u8)
+      @writer.push((0x80_u32 | (code & 0x3f_u32)).to_u8)
+    end
+  end
+
+  def owned? : Bool
+    @owned
+  end
+
+  def start : Int32
+    @start
+  end
+
+  def size : Int32
+    @size
+  end
+
+  def push_tape(text : Tape::String) : Nil
+    return if text.empty?
+    own
+    @writer.append(text)
+  end
+
+  def value : Tape::String
+    return @writer.finish if @owned
+    @input[@start, @size]
+  end
+
+  def ==(text : ::String) : Bool
+    value == text
+  end
+
+  # The bytes so far in a writer of their own, so that what follows them
+  # need not follow them in the input. Each value has its own writer: one
+  # handed out stays as it was.
+  private def own : Nil
+    return if @owned
+    @writer = Tape::String::Writer.new(@size + 16)
+    @writer.append(@input[@start, @size]) if @size > 0
+    @owned = true
+  end
+end
+
+# *input* with every "\r\n" and "\r" a "\n", as the input stream
+# preprocessing asks: *input* itself when it has no carriage return.
+pub def normalize_newlines(input : Tape::String) : Tape::String
+  return input unless input.includes?('\r')
+  writer = Tape::String::Writer.new(input.bytesize)
+  i = 0
+  size = input.bytesize
+  while i < size
+    byte = input[i]
+    if byte == 0x0d_u8
+      writer.push(0x0a_u8)
+      i = i + 1 if i + 1 < size && input[i + 1] == 0x0a_u8
+    else
+      writer.push(byte)
+    end
+    i = i + 1
+  end
+  writer.finish
+end
+
+private def space?(byte : UInt8) : Bool
+  byte == 0x20_u8 || byte == 0x0a_u8 || byte == 0x09_u8 || byte == 0x0c_u8
+end
+
+private def ascii_letter?(byte : UInt8) : Bool
+  (byte >= 0x61_u8 && byte <= 0x7a_u8) || (byte >= 0x41_u8 && byte <= 0x5a_u8)
+end
+
+private def ascii_alphanumeric?(byte : UInt8) : Bool
+  ascii_letter?(byte) || (byte >= 0x30_u8 && byte <= 0x39_u8)
+end
+
+private def lower(byte : UInt8) : UInt8
+  byte >= 0x41_u8 && byte <= 0x5a_u8 ? byte + 0x20_u8 : byte
+end
+
+# What a numeric character reference in 0x80..0x9F stands for, as
+# windows-1252 has it; 0 where it is the code point itself.
+C1_REPLACEMENTS = [
+  0x20ac_u32, 0_u32, 0x201a_u32, 0x0192_u32, 0x201e_u32, 0x2026_u32, 0x2020_u32, 0x2021_u32,
+  0x02c6_u32, 0x2030_u32, 0x0160_u32, 0x2039_u32, 0x0152_u32, 0_u32, 0x017d_u32, 0_u32,
+  0_u32, 0x2018_u32, 0x2019_u32, 0x201c_u32, 0x201d_u32, 0x2022_u32, 0x2013_u32, 0x2014_u32,
+  0x02dc_u32, 0x2122_u32, 0x0161_u32, 0x203a_u32, 0x0153_u32, 0_u32, 0x017e_u32, 0x0178_u32,
+]
+
+REPLACEMENT = 0xfffd_u32
+
+@[OnTape]
+pub struct Tokenizer
+  getter input : Tape::String
+  # Every tag's attributes, each tag's after the last's.
+  getter attrs : Tape::Array(Attr)
+  getter state : State
+  # Set when a tag starts an attribute past `max_attributes` (Gumbo's
+  # limit; html5ever's `too_many_attributes`, not upstream's).
+  getter too_many_attributes : Bool
+  # Whether the tree builder's adjusted current node is a foreign
+  # element, which lets `<![CDATA[` open a CDATA section. The tree
+  # builder sets it before it asks for each token.
+  property foreign_content : Bool
+  # Discard a byte order mark at the start, and after each `</script>`
+  # (html5ever drops one at the start of every feed, and feeds again after
+  # a script ends).
+  property discard_bom : Bool
+  # 0 for no limit.
+  property max_attributes : Int32
+
+  @pos : Int32
+  @size : Int32
+  @raw : RawKind
+  @doctype_id_system : Bool
+  @at_eof : Bool
+  @ended : Bool
+  @text : Bytes
+  @temp : Bytes
+  @tag_name : Bytes
+  @attr_name : Bytes
+  @attr_value : Bytes
+  @comment : Bytes
+  @doctype_name : Bytes
+  @public_id : Bytes
+  @system_id : Bytes
+  @tag_kind : TokenKind
+  @self_closing : Bool
+  @tag_attrs_start : Int32
+  @has_doctype_name : Bool
+  @has_public_id : Bool
+  @has_system_id : Bool
+  @force_quirks : Bool
+  @last_start_tag : Tape::String
+  @has_last_start_tag : Bool
+  @queued : Tape::Array(Token)
+  @next : Int32
+  @empty : Tape::String
+
+  def initialize(input : Tape::String)
+    @input = input
+    @size = input.bytesize
+    @pos = 0
+    @state = State::Data
+    @raw = RawKind::Rcdata
+    @doctype_id_system = false
+    @at_eof = false
+    @ended = false
+    @too_many_attributes = false
+    @foreign_content = false
+    @discard_bom = true
+    @max_attributes = 0
+    @attrs = Tape::Array(Attr).new
+    @text = Bytes.new(input)
+    @temp = Bytes.new(input)
+    @tag_name = Bytes.new(input)
+    @attr_name = Bytes.new(input)
+    @attr_value = Bytes.new(input)
+    @comment = Bytes.new(input)
+    @doctype_name = Bytes.new(input)
+    @public_id = Bytes.new(input)
+    @system_id = Bytes.new(input)
+    @tag_kind = TokenKind::StartTag
+    @self_closing = false
+    @tag_attrs_start = 0
+    @has_doctype_name = false
+    @has_public_id = false
+    @has_system_id = false
+    @force_quirks = false
+    @empty = input[0, 0]
+    @last_start_tag = @empty
+    @has_last_start_tag = false
+    @queued = Tape::Array(Token).new
+    @next = 0
+  end
+
+  # The state to start in: the tests' `initialStates`, and a fragment's
+  # context element's (`tokenizer_state_for_context_elem`).
+  def start_in(state : State, raw : RawKind) : Nil
+    @state = state
+    @raw = raw
+  end
+
+  def last_start_tag=(name : Tape::String) : Nil
+    @last_start_tag = name
+    @has_last_start_tag = true
+  end
+
+  # What the tree builder asks for after a start tag
+  # (`TokenSinkResult::Plaintext`, `RawData(kind)` and `Script`).
+  def switch_to_plaintext : Nil
+    @state = State::Plaintext
+  end
+
+  def switch_to_raw(kind : RawKind) : Nil
+    @state = State::RawData
+    @raw = kind
+  end
+
+  def script_ended : Nil
+    @state = State::Data
+    discard_byte_order_mark if @discard_bom
+  end
+
+  # The next token; `EOF` at the end, and again after it.
+  def next_token : Token
+    if @pos == 0 && @discard_bom
+      discard_byte_order_mark
+    end
+    while @next >= @queued.size
+      @queued = Tape::Array(Token).new if @next > 0
+      @next = 0
+      if @ended
+        return token(TokenKind::EOF)
+      end
+      if @pos >= @size && !in_char_ref_at_end
+        @at_eof = true
+        eof_step
+      else
+        step
+      end
+    end
+    token = @queued[@next]
+    @next = @next + 1
+    token
+  end
+
+  private def in_char_ref_at_end : Bool
+    false
+  end
+
+  private def discard_byte_order_mark : Nil
+    if @pos + 3 <= @size && @input[@pos] == 0xef_u8 && @input[@pos + 1] == 0xbb_u8 && @input[@pos + 2] == 0xbf_u8
+      @pos = @pos + 3
+    end
+  end
+
+  # --- emitting ---------------------------------------------------------
+
+  private def token(kind : TokenKind) : Token
+    Token.new(kind, @empty, @empty, 0, 0, false, @empty, @empty, false, false, false, false)
+  end
+
+  private def flush_text : Nil
+    return if @text.empty?
+    @queued << Token.new(TokenKind::Text, @empty, @text.value, 0, 0, false, @empty, @empty, false, false, false, false)
+    @text.clear
+  end
+
+  private def queue(token : Token) : Nil
+    flush_text
+    @queued << token
+  end
+
+  private def emit_input(at : Int32) : Nil
+    @text.push_input(at)
+  end
+
+  private def emit_input(at : Int32, count : Int32) : Nil
+    @text.push_input(at, count)
+  end
+
+  private def emit_byte(byte : UInt8) : Nil
+    @text.push_byte(byte)
+  end
+
+  private def emit_char(code : UInt32) : Nil
+    @text.push_char(code)
+  end
+
+  private def emit_null : Nil
+    queue(token(TokenKind::Null))
+  end
+
+  # The temporary buffer's bytes as text, views of the input where they
+  # are.
+  private def emit_temp : Nil
+    if @temp.owned?
+      @text.push_tape(@temp.value)
+    else
+      @text.push_input(@temp.start, @temp.size)
+    end
+    @temp.clear
+  end
+
+  private def emit_current_tag : Nil
+    finish_attribute
+    name = @tag_name.value
+    @tag_name.clear
+    if @tag_kind == TokenKind::StartTag
+      @last_start_tag = name
+      @has_last_start_tag = true
+    end
+    count = @attrs.size - @tag_attrs_start
+    queue(Token.new(@tag_kind, name, @empty, @tag_attrs_start, count, @self_closing, @empty, @empty,
+      false, false, false, false))
+  end
+
+  private def emit_comment : Nil
+    queue(Token.new(TokenKind::Comment, @empty, @comment.value, 0, 0, false, @empty, @empty,
+      false, false, false, false))
+    @comment.clear
+  end
+
+  private def emit_doctype : Nil
+    queue(Token.new(TokenKind::Doctype, @doctype_name.value, @empty, 0, 0, false, @public_id.value,
+      @system_id.value, @has_doctype_name, @has_public_id, @has_system_id, @force_quirks))
+    create_doctype
+  end
+
+  private def emit_eof : Nil
+    queue(token(TokenKind::EOF))
+    @ended = true
+  end
+
+  # --- the token being read ---------------------------------------------
+
+  private def discard_tag : Nil
+    @tag_name.clear
+    @self_closing = false
+    @tag_attrs_start = @attrs.size
+  end
+
+  private def create_tag(kind : TokenKind, at : Int32) : Nil
+    discard_tag
+    @tag_name.push_lower(at)
+    @tag_kind = kind
+  end
+
+  private def have_appropriate_end_tag : Bool
+    @has_last_start_tag && @tag_kind == TokenKind::EndTag && @tag_name.value == @last_start_tag
+  end
+
+  private def at_max_attributes : Bool
+    @max_attributes > 0 && @attrs.size - @tag_attrs_start >= @max_attributes
+  end
+
+  private def create_attribute : Nil
+    finish_attribute
+    @too_many_attributes = true if at_max_attributes
+  end
+
+  private def finish_attribute : Nil
+    return if @attr_name.empty?
+    if at_max_attributes
+      @attr_name.clear
+      @attr_value.clear
+      return
+    end
+    name = @attr_name.value
+    duplicate = false
+    i = @tag_attrs_start
+    while i < @attrs.size
+      if @attrs[i].name == name
+        duplicate = true
+        break
+      end
+      i = i + 1
+    end
+    @attrs << Attr.new(name, @attr_value.value, @empty, 0_u8) unless duplicate
+    @attr_name.clear
+    @attr_value.clear
+  end
+
+  private def create_doctype : Nil
+    @doctype_name.clear
+    @public_id.clear
+    @system_id.clear
+    @has_doctype_name = false
+    @has_public_id = false
+    @has_system_id = false
+    @force_quirks = false
+  end
+
+  private def push_doctype_id(at : Int32) : Nil
+    if @doctype_id_system
+      @system_id.push_input(at)
+    else
+      @public_id.push_input(at)
+    end
+  end
+
+  private def push_doctype_id_char(code : UInt32) : Nil
+    if @doctype_id_system
+      @system_id.push_char(code)
+    else
+      @public_id.push_char(code)
+    end
+  end
+
+  private def clear_doctype_id : Nil
+    if @doctype_id_system
+      @system_id.clear
+      @has_system_id = true
+    else
+      @public_id.clear
+      @has_public_id = true
+    end
+  end
+
+  # --- reading ----------------------------------------------------------
+
+  # Whether the input at the position is *pattern*, ASCII case ignored
+  # unless *exact*, and if so, past it.
+  private def eat(pattern : ::String, exact : Bool) : Bool
+    wanted_bytes = pattern.as_tape
+    count = wanted_bytes.bytesize
+    return false if @pos + count > @size
+    i = 0
+    while i < count
+      byte = @input[@pos + i]
+      wanted = wanted_bytes[i]
+      return false unless byte == wanted || (!exact && lower(byte) == wanted)
+      i = i + 1
+    end
+    @pos = @pos + count
+    true
+  end
+
+  private def reconsume(state : State) : Nil
+    @pos = @pos - 1
+    @state = state
+  end
+
+  # The data states read text up to the next byte that matters as one
+  # view: from the position to the first of *stop*'s bytes.
+  private def text_run(stop1 : UInt8, stop2 : UInt8, stop3 : UInt8) : Nil
+    start = @pos
+    while @pos < @size
+      byte = @input[@pos]
+      break if byte == stop1 || byte == stop2 || byte == stop3
+      @pos = @pos + 1
+    end
+    emit_input(start, @pos - start) if @pos > start
+  end
+
+  private def value_run(stop1 : UInt8, stop2 : UInt8) : Nil
+    start = @pos
+    while @pos < @size
+      byte = @input[@pos]
+      break if byte == stop1 || byte == stop2 || byte == 0_u8
+      @pos = @pos + 1
+    end
+    @attr_value.push_input(start, @pos - start) if @pos > start
+  end
+
+  # One step: reads until a state change or a token, or to the end of the
+  # input. The caller sees the end and calls `eof_step`.
+  private def step : Nil
+    case @state
+    when State::Data
+      while @pos < @size && @queued.size == @next
+        text_run(0x3c_u8, 0x26_u8, 0_u8)
+        break if @pos >= @size
+        at = @pos
+        byte = @input[at]
+        @pos = @pos + 1
+        case byte
+        when 0_u8
+          emit_null
+        when 0x26_u8
+          char_ref(false)
+        else
+          @state = State::TagOpen
+          return
+        end
+      end
+    when State::RawData
+      raw_data_step
+    when State::Plaintext
+      while @pos < @size
+        text_run(0_u8, 0_u8, 0_u8)
+        break if @pos >= @size
+        @pos = @pos + 1
+        emit_char(REPLACEMENT)
+      end
+    when State::TagOpen
+      at = @pos
+      byte = @input[at]
+      @pos = @pos + 1
+      case byte
+      when 0x21_u8
+        @state = State::MarkupDeclarationOpen
+        # The text before goes to the tree builder first: what it makes of
+        # it decides whether `<![CDATA[` opens a section, as it has with
+        # html5ever, which hands on each character as it reads it.
+        flush_text
+      when 0x2f_u8
+        @state = State::EndTagOpen
+      when 0x3f_u8
+        @comment.clear
+        reconsume(State::BogusComment)
+      else
+        if ascii_letter?(byte)
+          create_tag(TokenKind::StartTag, at)
+          @state = State::TagName
+        else
+          emit_input(at - 1)
+          reconsume(State::Data)
+        end
+      end
+    when State::EndTagOpen
+      at = @pos
+      byte = @input[at]
+      @pos = @pos + 1
+      if byte == 0x3e_u8
+        @state = State::Data
+      elsif ascii_letter?(byte)
+        create_tag(TokenKind::EndTag, at)
+        @state = State::TagName
+      else
+        @comment.clear
+        reconsume(State::BogusComment)
+      end
+    when State::TagName
+      while @pos < @size
+        at = @pos
+        byte = @input[at]
+        @pos = @pos + 1
+        if space?(byte)
+          @state = State::BeforeAttributeName
+          return
+        elsif byte == 0x2f_u8
+          @state = State::SelfClosingStartTag
+          return
+        elsif byte == 0x3e_u8
+          @state = State::Data
+          emit_current_tag
+          return
+        elsif byte == 0_u8
+          @tag_name.push_char(REPLACEMENT)
+        else
+          @tag_name.push_lower(at)
+        end
+      end
+    when State::RawLessThanSign
+      raw_less_than_sign_step
+    when State::RawEndTagOpen
+      at = @pos
+      byte = @input[at]
+      @pos = @pos + 1
+      if ascii_letter?(byte)
+        create_tag(TokenKind::EndTag, at)
+        @temp.push_input(at)
+        @state = State::RawEndTagName
+      else
+        emit_input(at - 2, 2)
+        reconsume(State::RawData)
+      end
+    when State::RawEndTagName
+      at = @pos
+      byte = @input[at]
+      @pos = @pos + 1
+      if have_appropriate_end_tag
+        if space?(byte)
+          @temp.clear
+          @state = State::BeforeAttributeName
+          return
+        elsif byte == 0x2f_u8
+          @temp.clear
+          @state = State::SelfClosingStartTag
+          return
+        elsif byte == 0x3e_u8
+          @temp.clear
+          @state = State::Data
+          emit_current_tag
+          return
+        end
+      end
+      if ascii_letter?(byte)
+        @tag_name.push_lower(at)
+        @temp.push_input(at)
+      else
+        discard_tag
+        emit_byte(0x3c_u8)
+        emit_byte(0x2f_u8)
+        emit_temp
+        reconsume(State::RawData)
+      end
+    when State::ScriptDataEscapeStart
+      at = @pos
+      byte = @input[at]
+      @pos = @pos + 1
+      if @raw == RawKind::DoubleEscaped
+        if space?(byte) || byte == 0x2f_u8 || byte == 0x3e_u8
+          escaped = @temp == "script" ? RawKind::DoubleEscaped : RawKind::Escaped
+          emit_input(at)
+          @state = State::RawData
+          @raw = escaped
+        elsif ascii_letter?(byte)
+          @temp.push_lower(at)
+          emit_input(at)
+        else
+          @raw = RawKind::Escaped
+          reconsume(State::RawData)
+        end
+      else
+        if byte == 0x2d_u8
+          emit_input(at)
+          @state = State::ScriptDataEscapeStartDash
+        else
+          @raw = RawKind::ScriptData
+          reconsume(State::RawData)
+        end
+      end
+    when State::ScriptDataEscapeStartDash
+      at = @pos
+      byte = @input[at]
+      @pos = @pos + 1
+      if byte == 0x2d_u8
+        emit_input(at)
+        @raw = RawKind::Escaped
+        @state = State::ScriptDataEscapedDashDash
+      else
+        @raw = RawKind::ScriptData
+        reconsume(State::RawData)
+      end
+    when State::ScriptDataEscapedDash, State::ScriptDataEscapedDashDash
+      at = @pos
+      byte = @input[at]
+      @pos = @pos + 1
+      dash_dash = @state == State::ScriptDataEscapedDashDash
+      if byte == 0x2d_u8
+        emit_input(at)
+        @state = State::ScriptDataEscapedDashDash
+      elsif byte == 0x3c_u8
+        emit_input(at) if @raw == RawKind::DoubleEscaped
+        @state = State::RawLessThanSign
+      elsif byte == 0x3e_u8 && dash_dash
+        emit_input(at)
+        @raw = RawKind::ScriptData
+        @state = State::RawData
+      elsif byte == 0_u8
+        emit_char(REPLACEMENT)
+        @state = State::RawData
+      else
+        emit_input(at)
+        @state = State::RawData
+      end
+    when State::ScriptDataDoubleEscapeEnd
+      at = @pos
+      byte = @input[at]
+      @pos = @pos + 1
+      if space?(byte) || byte == 0x2f_u8 || byte == 0x3e_u8
+        escaped = @temp == "script" ? RawKind::Escaped : RawKind::DoubleEscaped
+        emit_input(at)
+        @state = State::RawData
+        @raw = escaped
+      elsif ascii_letter?(byte)
+        @temp.push_lower(at)
+        emit_input(at)
+      else
+        @raw = RawKind::DoubleEscaped
+        reconsume(State::RawData)
+      end
+    when State::BeforeAttributeName
+      while @pos < @size
+        at = @pos
+        byte = @input[at]
+        @pos = @pos + 1
+        next if space?(byte)
+        if byte == 0x2f_u8
+          @state = State::SelfClosingStartTag
+        elsif byte == 0x3e_u8
+          @state = State::Data
+          emit_current_tag
+        elsif byte == 0_u8
+          create_attribute
+          @attr_name.push_char(REPLACEMENT)
+          @state = State::AttributeName
+        else
+          create_attribute
+          @attr_name.push_lower(at)
+          @state = State::AttributeName
+        end
+        return
+      end
+    when State::AttributeName
+      while @pos < @size
+        at = @pos
+        byte = @input[at]
+        @pos = @pos + 1
+        if space?(byte)
+          @state = State::AfterAttributeName
+          return
+        elsif byte == 0x2f_u8
+          @state = State::SelfClosingStartTag
+          return
+        elsif byte == 0x3d_u8
+          @state = State::BeforeAttributeValue
+          return
+        elsif byte == 0x3e_u8
+          @state = State::Data
+          emit_current_tag
+          return
+        elsif byte == 0_u8
+          @attr_name.push_char(REPLACEMENT)
+        else
+          @attr_name.push_lower(at)
+        end
+      end
+    when State::AfterAttributeName
+      while @pos < @size
+        at = @pos
+        byte = @input[at]
+        @pos = @pos + 1
+        next if space?(byte)
+        if byte == 0x2f_u8
+          @state = State::SelfClosingStartTag
+        elsif byte == 0x3d_u8
+          @state = State::BeforeAttributeValue
+        elsif byte == 0x3e_u8
+          @state = State::Data
+          emit_current_tag
+        elsif byte == 0_u8
+          create_attribute
+          @attr_name.push_char(REPLACEMENT)
+          @state = State::AttributeName
+        else
+          create_attribute
+          @attr_name.push_lower(at)
+          @state = State::AttributeName
+        end
+        return
+      end
+    when State::BeforeAttributeValue
+      while @pos < @size
+        byte = @input[@pos]
+        if space?(byte)
+          @pos = @pos + 1
+          next
+        end
+        if byte == 0x22_u8
+          @pos = @pos + 1
+          @state = State::AttributeValueDoubleQuoted
+        elsif byte == 0x27_u8
+          @pos = @pos + 1
+          @state = State::AttributeValueSingleQuoted
+        elsif byte == 0x3e_u8
+          @pos = @pos + 1
+          @state = State::Data
+          emit_current_tag
+        else
+          @state = State::AttributeValueUnquoted
+        end
+        return
+      end
+    when State::AttributeValueDoubleQuoted, State::AttributeValueSingleQuoted
+      quote = @state == State::AttributeValueDoubleQuoted ? 0x22_u8 : 0x27_u8
+      while @pos < @size
+        value_run(quote, 0x26_u8)
+        break if @pos >= @size
+        byte = @input[@pos]
+        @pos = @pos + 1
+        if byte == quote
+          @state = State::AfterAttributeValueQuoted
+          return
+        elsif byte == 0x26_u8
+          char_ref(true)
+        else
+          @attr_value.push_char(REPLACEMENT)
+        end
+      end
+    when State::AttributeValueUnquoted
+      while @pos < @size
+        at = @pos
+        byte = @input[at]
+        @pos = @pos + 1
+        if space?(byte)
+          @state = State::BeforeAttributeName
+          return
+        elsif byte == 0x26_u8
+          char_ref(true)
+        elsif byte == 0x3e_u8
+          @state = State::Data
+          emit_current_tag
+          return
+        elsif byte == 0_u8
+          @attr_value.push_char(REPLACEMENT)
+        else
+          @attr_value.push_input(at)
+        end
+      end
+    when State::AfterAttributeValueQuoted
+      byte = @input[@pos]
+      @pos = @pos + 1
+      if space?(byte)
+        @state = State::BeforeAttributeName
+      elsif byte == 0x2f_u8
+        @state = State::SelfClosingStartTag
+      elsif byte == 0x3e_u8
+        @state = State::Data
+        emit_current_tag
+      else
+        reconsume(State::BeforeAttributeName)
+      end
+    when State::SelfClosingStartTag
+      byte = @input[@pos]
+      @pos = @pos + 1
+      if byte == 0x3e_u8
+        @self_closing = true
+        @state = State::Data
+        emit_current_tag
+      else
+        reconsume(State::BeforeAttributeName)
+      end
+    else
+      comment_or_doctype_step
+    end
+  end
+
+  private def raw_data_step : Nil
+    case @raw
+    when RawKind::Rcdata
+      while @pos < @size && @state == State::RawData
+        text_run(0x3c_u8, 0x26_u8, 0_u8)
+        break if @pos >= @size
+        byte = @input[@pos]
+        @pos = @pos + 1
+        if byte == 0_u8
+          emit_char(REPLACEMENT)
+        elsif byte == 0x26_u8
+          char_ref(false)
+        else
+          @state = State::RawLessThanSign
+        end
+      end
+    when RawKind::Rawtext, RawKind::ScriptData
+      while @pos < @size
+        text_run(0x3c_u8, 0_u8, 0_u8)
+        break if @pos >= @size
+        byte = @input[@pos]
+        @pos = @pos + 1
+        if byte == 0_u8
+          emit_char(REPLACEMENT)
+        else
+          @state = State::RawLessThanSign
+          return
+        end
+      end
+    else
+      while @pos < @size
+        text_run(0x3c_u8, 0x2d_u8, 0_u8)
+        break if @pos >= @size
+        at = @pos
+        byte = @input[at]
+        @pos = @pos + 1
+        if byte == 0_u8
+          emit_char(REPLACEMENT)
+        elsif byte == 0x2d_u8
+          emit_input(at)
+          @state = State::ScriptDataEscapedDash
+          return
+        else
+          emit_input(at) if @raw == RawKind::DoubleEscaped
+          @state = State::RawLessThanSign
+          return
+        end
+      end
+    end
+  end
+
+  private def raw_less_than_sign_step : Nil
+    at = @pos
+    byte = @input[at]
+    @pos = @pos + 1
+    case @raw
+    when RawKind::Escaped
+      if byte == 0x2f_u8
+        @temp.clear
+        @state = State::RawEndTagOpen
+      elsif ascii_letter?(byte)
+        @temp.clear
+        @temp.push_lower(at)
+        emit_input(at - 1, 2)
+        @raw = RawKind::DoubleEscaped
+        @state = State::ScriptDataEscapeStart
+      else
+        emit_input(at - 1)
+        reconsume(State::RawData)
+      end
+    when RawKind::DoubleEscaped
+      if byte == 0x2f_u8
+        @temp.clear
+        emit_input(at)
+        @state = State::ScriptDataDoubleEscapeEnd
+      else
+        reconsume(State::RawData)
+      end
+    else
+      if byte == 0x2f_u8
+        @temp.clear
+        @state = State::RawEndTagOpen
+      elsif byte == 0x21_u8 && @raw == RawKind::ScriptData
+        emit_input(at - 1, 2)
+        @raw = RawKind::Escaped
+        @state = State::ScriptDataEscapeStart
+      else
+        emit_input(at - 1)
+        reconsume(State::RawData)
+      end
+    end
+  end
+
+  private def comment_or_doctype_step : Nil
+    case @state
+    when State::CommentStart
+      at = @pos
+      byte = @input[at]
+      @pos = @pos + 1
+      if byte == 0x2d_u8
+        @state = State::CommentStartDash
+      elsif byte == 0_u8
+        @comment.push_char(REPLACEMENT)
+        @state = State::Comment
+      elsif byte == 0x3e_u8
+        @state = State::Data
+        emit_comment
+      else
+        @comment.push_input(at)
+        @state = State::Comment
+      end
+    when State::CommentStartDash
+      at = @pos
+      byte = @input[at]
+      @pos = @pos + 1
+      if byte == 0x2d_u8
+        @state = State::CommentEnd
+      elsif byte == 0_u8
+        @comment.push_byte(0x2d_u8)
+        @comment.push_char(REPLACEMENT)
+        @state = State::Comment
+      elsif byte == 0x3e_u8
+        @state = State::Data
+        emit_comment
+      else
+        @comment.push_input(at - 1, 2)
+        @state = State::Comment
+      end
+    when State::Comment
+      while @pos < @size
+        at = @pos
+        byte = @input[at]
+        @pos = @pos + 1
+        if byte == 0x3c_u8
+          @comment.push_input(at)
+          @state = State::CommentLessThanSign
+          return
+        elsif byte == 0x2d_u8
+          @state = State::CommentEndDash
+          return
+        elsif byte == 0_u8
+          @comment.push_char(REPLACEMENT)
+        else
+          @comment.push_input(at)
+        end
+      end
+    when State::CommentLessThanSign
+      at = @pos
+      byte = @input[at]
+      @pos = @pos + 1
+      if byte == 0x21_u8
+        @comment.push_input(at)
+        @state = State::CommentLessThanSignBang
+      elsif byte == 0x3c_u8
+        @comment.push_input(at)
+      else
+        reconsume(State::Comment)
+      end
+    when State::CommentLessThanSignBang
+      byte = @input[@pos]
+      @pos = @pos + 1
+      if byte == 0x2d_u8
+        @state = State::CommentLessThanSignBangDash
+      else
+        reconsume(State::Comment)
+      end
+    when State::CommentLessThanSignBangDash
+      byte = @input[@pos]
+      @pos = @pos + 1
+      if byte == 0x2d_u8
+        @state = State::CommentLessThanSignBangDashDash
+      else
+        reconsume(State::CommentEndDash)
+      end
+    when State::CommentLessThanSignBangDashDash
+      @pos = @pos + 1
+      reconsume(State::CommentEnd)
+    when State::CommentEndDash
+      at = @pos
+      byte = @input[at]
+      @pos = @pos + 1
+      if byte == 0x2d_u8
+        @state = State::CommentEnd
+      elsif byte == 0_u8
+        @comment.push_byte(0x2d_u8)
+        @comment.push_char(REPLACEMENT)
+        @state = State::Comment
+      else
+        @comment.push_byte(0x2d_u8)
+        @comment.push_input(at)
+        @state = State::Comment
+      end
+    when State::CommentEnd
+      at = @pos
+      byte = @input[at]
+      @pos = @pos + 1
+      if byte == 0x3e_u8
+        @state = State::Data
+        emit_comment
+      elsif byte == 0x21_u8
+        @state = State::CommentEndBang
+      elsif byte == 0x2d_u8
+        @comment.push_byte(0x2d_u8)
+      else
+        @comment.push_text("--")
+        reconsume(State::Comment)
+      end
+    when State::CommentEndBang
+      at = @pos
+      byte = @input[at]
+      @pos = @pos + 1
+      if byte == 0x2d_u8
+        @comment.push_text("--!")
+        @state = State::CommentEndDash
+      elsif byte == 0x3e_u8
+        @state = State::Data
+        emit_comment
+      elsif byte == 0_u8
+        @comment.push_text("--!")
+        @comment.push_char(REPLACEMENT)
+        @state = State::Comment
+      else
+        @comment.push_text("--!")
+        @comment.push_input(at)
+        @state = State::Comment
+      end
+    when State::Doctype
+      byte = @input[@pos]
+      @pos = @pos + 1
+      if space?(byte)
+        @state = State::BeforeDoctypeName
+      else
+        reconsume(State::BeforeDoctypeName)
+      end
+    when State::BeforeDoctypeName
+      while @pos < @size
+        at = @pos
+        byte = @input[at]
+        @pos = @pos + 1
+        next if space?(byte)
+        create_doctype
+        if byte == 0_u8
+          @has_doctype_name = true
+          @doctype_name.push_char(REPLACEMENT)
+          @state = State::DoctypeName
+        elsif byte == 0x3e_u8
+          @force_quirks = true
+          @state = State::Data
+          emit_doctype
+        else
+          @has_doctype_name = true
+          @doctype_name.push_lower(at)
+          @state = State::DoctypeName
+        end
+        return
+      end
+    when State::DoctypeName
+      while @pos < @size
+        at = @pos
+        byte = @input[at]
+        @pos = @pos + 1
+        if space?(byte)
+          @temp.clear
+          @state = State::AfterDoctypeName
+          return
+        elsif byte == 0x3e_u8
+          @state = State::Data
+          emit_doctype
+          return
+        elsif byte == 0_u8
+          @doctype_name.push_char(REPLACEMENT)
+        else
+          @doctype_name.push_lower(at)
+        end
+      end
+    when State::AfterDoctypeName
+      if eat("public", false)
+        @doctype_id_system = false
+        @state = State::AfterDoctypeKeyword
+      elsif eat("system", false)
+        @doctype_id_system = true
+        @state = State::AfterDoctypeKeyword
+      else
+        byte = @input[@pos]
+        @pos = @pos + 1
+        if space?(byte)
+        elsif byte == 0x3e_u8
+          @state = State::Data
+          emit_doctype
+        else
+          @force_quirks = true
+          reconsume(State::BogusDoctype)
+        end
+      end
+    when State::AfterDoctypeKeyword, State::BeforeDoctypeIdentifier
+      byte = @input[@pos]
+      @pos = @pos + 1
+      if space?(byte)
+        @state = State::BeforeDoctypeIdentifier if @state == State::AfterDoctypeKeyword
+      elsif byte == 0x22_u8
+        clear_doctype_id
+        @state = State::DoctypeIdentifierDoubleQuoted
+      elsif byte == 0x27_u8
+        clear_doctype_id
+        @state = State::DoctypeIdentifierSingleQuoted
+      elsif byte == 0x3e_u8
+        @force_quirks = true
+        @state = State::Data
+        emit_doctype
+      else
+        @force_quirks = true
+        reconsume(State::BogusDoctype)
+      end
+    when State::DoctypeIdentifierDoubleQuoted, State::DoctypeIdentifierSingleQuoted
+      quote = @state == State::DoctypeIdentifierDoubleQuoted ? 0x22_u8 : 0x27_u8
+      while @pos < @size
+        at = @pos
+        byte = @input[at]
+        @pos = @pos + 1
+        if byte == quote
+          @state = State::AfterDoctypeIdentifier
+          return
+        elsif byte == 0_u8
+          push_doctype_id_char(REPLACEMENT)
+        elsif byte == 0x3e_u8
+          @force_quirks = true
+          @state = State::Data
+          emit_doctype
+          return
+        else
+          push_doctype_id(at)
+        end
+      end
+    when State::AfterDoctypeIdentifier
+      byte = @input[@pos]
+      @pos = @pos + 1
+      if @doctype_id_system
+        if space?(byte)
+        elsif byte == 0x3e_u8
+          @state = State::Data
+          emit_doctype
+        else
+          reconsume(State::BogusDoctype)
+        end
+      else
+        if space?(byte)
+          @state = State::BetweenDoctypePublicAndSystemIdentifiers
+        elsif byte == 0x3e_u8
+          @state = State::Data
+          emit_doctype
+        elsif byte == 0x22_u8 || byte == 0x27_u8
+          @doctype_id_system = true
+          clear_doctype_id
+          @state = byte == 0x22_u8 ? State::DoctypeIdentifierDoubleQuoted : State::DoctypeIdentifierSingleQuoted
+        else
+          @force_quirks = true
+          reconsume(State::BogusDoctype)
+        end
+      end
+    when State::BetweenDoctypePublicAndSystemIdentifiers
+      byte = @input[@pos]
+      @pos = @pos + 1
+      if space?(byte)
+      elsif byte == 0x3e_u8
+        @state = State::Data
+        emit_doctype
+      elsif byte == 0x22_u8 || byte == 0x27_u8
+        @doctype_id_system = true
+        clear_doctype_id
+        @state = byte == 0x22_u8 ? State::DoctypeIdentifierDoubleQuoted : State::DoctypeIdentifierSingleQuoted
+      else
+        @force_quirks = true
+        reconsume(State::BogusDoctype)
+      end
+    when State::BogusDoctype
+      while @pos < @size
+        byte = @input[@pos]
+        @pos = @pos + 1
+        if byte == 0x3e_u8
+          @state = State::Data
+          emit_doctype
+          return
+        end
+      end
+    when State::BogusComment
+      while @pos < @size
+        at = @pos
+        byte = @input[at]
+        @pos = @pos + 1
+        if byte == 0x3e_u8
+          @state = State::Data
+          emit_comment
+          return
+        elsif byte == 0_u8
+          @comment.push_char(REPLACEMENT)
+        else
+          @comment.push_input(at)
+        end
+      end
+    when State::MarkupDeclarationOpen
+      if eat("--", true)
+        @comment.clear
+        @state = State::CommentStart
+      elsif eat("doctype", false)
+        @state = State::Doctype
+      elsif @foreign_content && eat("[CDATA[", true)
+        @temp.clear
+        @state = State::CdataSection
+      else
+        @comment.clear
+        @state = State::BogusComment
+      end
+    when State::CdataSection
+      while @pos < @size
+        at = @pos
+        byte = @input[at]
+        @pos = @pos + 1
+        if byte == 0x5d_u8
+          @state = State::CdataSectionBracket
+          return
+        elsif byte == 0_u8
+          emit_temp
+          emit_null
+          return
+        else
+          @temp.push_input(at)
+        end
+      end
+    when State::CdataSectionBracket
+      byte = @input[@pos]
+      @pos = @pos + 1
+      if byte == 0x5d_u8
+        @state = State::CdataSectionEnd
+      else
+        @temp.push_byte(0x5d_u8)
+        reconsume(State::CdataSection)
+      end
+    when State::CdataSectionEnd
+      byte = @input[@pos]
+      @pos = @pos + 1
+      if byte == 0x5d_u8
+        @temp.push_byte(0x5d_u8)
+      elsif byte == 0x3e_u8
+        emit_temp
+        @state = State::Data
+      else
+        @temp.push_text("]]")
+        reconsume(State::CdataSection)
+      end
+    else
+      raise "htmlparse: no step for #{@state}"
+    end
+  end
+
+  # At the end of the input: what the state makes of it, then `EOF`.
+  private def eof_step : Nil
+    case @state
+    when State::Data, State::Plaintext
+      emit_eof
+    when State::RawData
+      if @raw == RawKind::Escaped || @raw == RawKind::DoubleEscaped
+        @state = State::Data
+      else
+        emit_eof
+      end
+    when State::TagName, State::BeforeAttributeName, State::AttributeName, State::AfterAttributeName,
+         State::AttributeValueDoubleQuoted, State::AttributeValueSingleQuoted,
+         State::AttributeValueUnquoted, State::AfterAttributeValueQuoted, State::SelfClosingStartTag,
+         State::ScriptDataEscapedDash, State::ScriptDataEscapedDashDash
+      @state = State::Data
+    when State::BeforeAttributeValue
+      @state = State::AttributeValueUnquoted
+    when State::TagOpen
+      emit_byte(0x3c_u8)
+      @state = State::Data
+    when State::EndTagOpen
+      emit_byte(0x3c_u8)
+      emit_byte(0x2f_u8)
+      @state = State::Data
+    when State::RawLessThanSign
+      if @raw == RawKind::DoubleEscaped
+        @state = State::RawData
+      else
+        emit_byte(0x3c_u8)
+        @state = State::RawData
+      end
+    when State::RawEndTagOpen
+      emit_byte(0x3c_u8)
+      emit_byte(0x2f_u8)
+      @state = State::RawData
+    when State::RawEndTagName
+      emit_byte(0x3c_u8)
+      emit_byte(0x2f_u8)
+      emit_temp
+      @state = State::RawData
+    when State::ScriptDataEscapeStart
+      @state = State::RawData
+    when State::ScriptDataEscapeStartDash
+      @raw = RawKind::ScriptData
+      @state = State::RawData
+    when State::ScriptDataDoubleEscapeEnd
+      @raw = RawKind::DoubleEscaped
+      @state = State::RawData
+    when State::CommentStart, State::CommentStartDash, State::Comment, State::CommentEndDash,
+         State::CommentEnd, State::CommentEndBang
+      @state = State::Data
+      emit_comment
+    when State::CommentLessThanSign, State::CommentLessThanSignBang
+      @state = State::Comment
+    when State::CommentLessThanSignBangDash
+      @state = State::CommentEndDash
+    when State::CommentLessThanSignBangDashDash
+      @state = State::CommentEnd
+    when State::Doctype, State::BeforeDoctypeName
+      create_doctype
+      @force_quirks = true
+      @state = State::Data
+      emit_doctype
+    when State::DoctypeName, State::AfterDoctypeName, State::AfterDoctypeKeyword,
+         State::BeforeDoctypeIdentifier, State::DoctypeIdentifierDoubleQuoted,
+         State::DoctypeIdentifierSingleQuoted, State::AfterDoctypeIdentifier,
+         State::BetweenDoctypePublicAndSystemIdentifiers
+      @force_quirks = true
+      @state = State::Data
+      emit_doctype
+    when State::BogusDoctype
+      @state = State::Data
+      emit_doctype
+    when State::BogusComment
+      @state = State::Data
+      emit_comment
+    when State::MarkupDeclarationOpen
+      @comment.clear
+      @state = State::BogusComment
+    when State::CdataSection
+      emit_temp
+      @state = State::Data
+    when State::CdataSectionBracket
+      @temp.push_byte(0x5d_u8)
+      @state = State::CdataSection
+    when State::CdataSectionEnd
+      @temp.push_text("]]")
+      @state = State::CdataSection
+    else
+      raise "htmlparse: no end of input for #{@state}"
+    end
+  end
+
+  # --- character references ---------------------------------------------
+
+  # A character reference, the `&` read: what it stands for goes into the
+  # text, or the attribute value *in_attribute*; when it stands for
+  # nothing, the `&` does, and what followed it is read again.
+  private def char_ref(in_attribute : Bool) : Nil
+    amp = @pos - 1
+    if @pos >= @size
+      char_ref_none(amp, in_attribute)
+      return
+    end
+    byte = @input[@pos]
+    if ascii_alphanumeric?(byte)
+      named_char_ref(amp, in_attribute)
+    elsif byte == 0x23_u8
+      @pos = @pos + 1
+      numeric_char_ref(amp, in_attribute)
+    else
+      char_ref_none(amp, in_attribute)
+    end
+  end
+
+  private def char_ref_none(amp : Int32, in_attribute : Bool) : Nil
+    if in_attribute
+      @attr_value.push_input(amp)
+    else
+      emit_input(amp)
+    end
+  end
+
+  private def char_ref_chars(first : UInt32, second : UInt32, in_attribute : Bool) : Nil
+    if in_attribute
+      @attr_value.push_char(first)
+      @attr_value.push_char(second) if second != 0_u32
+    else
+      emit_char(first)
+      emit_char(second) if second != 0_u32
+    end
+  end
+
+  private def numeric_char_ref(amp : Int32, in_attribute : Bool) : Nil
+    hash = @pos - 1
+    base = 10_u32
+    if @pos < @size && (@input[@pos] == 0x78_u8 || @input[@pos] == 0x58_u8)
+      @pos = @pos + 1
+      base = 16_u32
+    end
+    num = 0_u32
+    too_big = false
+    seen_digit = false
+    while @pos < @size
+      digit = digit_value(@input[@pos], base)
+      break if digit < 0
+      @pos = @pos + 1
+      num = num &* base
+      too_big = true if num > 0x10ffff_u32
+      num = num &+ digit.to_u32
+      seen_digit = true
+    end
+    unless seen_digit
+      @pos = hash
+      char_ref_none(amp, in_attribute)
+      return
+    end
+    @pos = @pos + 1 if @pos < @size && @input[@pos] == 0x3b_u8
+    char_ref_chars(numeric_value(num, too_big), 0_u32, in_attribute)
+  end
+
+  private def digit_value(byte : UInt8, base : UInt32) : Int32
+    if byte >= 0x30_u8 && byte <= 0x39_u8
+      return (byte - 0x30_u8).to_i32
+    end
+    return -1 if base == 10_u32
+    if byte >= 0x61_u8 && byte <= 0x66_u8
+      return (byte - 0x61_u8).to_i32 + 10
+    end
+    if byte >= 0x41_u8 && byte <= 0x46_u8
+      return (byte - 0x41_u8).to_i32 + 10
+    end
+    -1
+  end
+
+  private def numeric_value(num : UInt32, too_big : Bool) : UInt32
+    return REPLACEMENT if num > 0x10ffff_u32 || too_big
+    return REPLACEMENT if num == 0_u32 || (num >= 0xd800_u32 && num <= 0xdfff_u32)
+    if num >= 0x80_u32 && num <= 0x9f_u32
+      replacement = C1_REPLACEMENTS[(num - 0x80_u32).to_i32]
+      return replacement if replacement != 0_u32
+    end
+    num
+  end
+
+  # html5ever reads a name for as long as what it has read begins a name,
+  # remembering the longest that is one; what it read past that is read
+  # again.
+  private def named_char_ref(amp : Int32, in_attribute : Bool) : Nil
+    start = @pos
+    matched = 0_i64
+    matched_size = 0
+    read = 0
+    while start + read < @size
+      read = read + 1
+      found = lookup(@input[start, read])
+      break if found.nil?
+      if found != PREFIX
+        matched = found
+        matched_size = read
+      end
+    end
+    if matched_size == 0
+      @pos = start
+      char_ref_none(amp, in_attribute)
+      return
+    end
+    last = @input[start + matched_size - 1]
+    if last != 0x3b_u8 && in_attribute && matched_size < read
+      after = @input[start + matched_size]
+      if after == 0x3d_u8 || ascii_alphanumeric?(after)
+        @pos = start
+        char_ref_none(amp, in_attribute)
+        return
+      end
+    end
+    @pos = start + matched_size
+    char_ref_chars((matched >> 32).to_u32, (matched & 0xffffffff_i64).to_u32, in_attribute)
+  end
+end

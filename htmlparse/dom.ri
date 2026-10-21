@@ -1,0 +1,438 @@
+# The tree a parse builds, on the tape: nodes in one array, linked by
+# index (parent, first and last child, previous and next sibling), so
+# that moving a node is a few writes and finding its place is none.
+# Attributes are ranges of one array, the tokenizer's: a node whose
+# attributes change gets a new range at its end.
+#
+# Text that the parser adds next to a text node joins it, as in the DOM.
+# The pieces are kept apart until the text is read, so that text built
+# from many tokens (`a&amp;b&amp;c…`) is joined once, not once per piece.
+module htmlparse/dom
+
+import std/int
+import htmlparse/tags::{Tag, tag_of}
+import htmlparse/tokenizer::{Attr}
+
+pub enum NodeKind : UInt8
+  Document
+  Fragment
+  Element
+  Text
+  Comment
+  Doctype
+end
+
+# An element's namespace, and an attribute's (`None` for most).
+pub enum Namespace : UInt8
+  None
+  Html
+  Svg
+  MathML
+  XLink
+  Xml
+  Xmlns
+end
+
+NO_NODE = -1
+
+@[OnTape]
+pub struct Node
+  property kind : NodeKind
+  property namespace : Namespace
+  # An element's name as a `Tag`; `Tag::Other` for a name the parser
+  # does not decide by.
+  property tag : Tag
+  # An element's local name, a doctype's name.
+  property name : Tape::String
+  # A text's or comment's data, a doctype's public identifier.
+  property data : Tape::String
+  # A doctype's system identifier.
+  property system_id : Tape::String
+  property parent : Int32
+  property first_child : Int32
+  property last_child : Int32
+  property previous : Int32
+  property next : Int32
+  property attrs_start : Int32
+  property attrs_count : Int32
+  # A template element's contents, a fragment, when the parse keeps them
+  # apart; otherwise its children are its contents.
+  property contents : Int32
+  # Text added to this text node since its data was last read, as a list
+  # of pieces.
+  property pieces_first : Int32
+  property pieces_last : Int32
+
+  def initialize(@kind : NodeKind, @namespace : Namespace, @tag : Tag, @name : Tape::String,
+                 @data : Tape::String, @system_id : Tape::String)
+    @parent = NO_NODE
+    @first_child = NO_NODE
+    @last_child = NO_NODE
+    @previous = NO_NODE
+    @next = NO_NODE
+    @attrs_start = 0
+    @attrs_count = 0
+    @contents = NO_NODE
+    @pieces_first = NO_NODE
+    @pieces_last = NO_NODE
+  end
+end
+
+@[OnTape]
+struct Piece
+  getter text : Tape::String
+  property next : Int32
+
+  def initialize(@text : Tape::String)
+    @next = NO_NODE
+  end
+end
+
+@[OnTape]
+pub struct Dom
+  getter nodes : Tape::Array(Node)
+  getter attrs : Tape::Array(Attr)
+  @pieces : Tape::Array(Piece)
+  @empty : Tape::String
+
+  # A document node, 0, with *attrs* holding the attributes to come.
+  def initialize(@attrs : Tape::Array(Attr), empty : Tape::String)
+    @empty = empty
+    @nodes = Tape::Array(Node).new(64)
+    @pieces = Tape::Array(Piece).new
+    @nodes << Node.new(NodeKind::Document, Namespace::None, Tag::Other, empty, empty, empty)
+  end
+
+  def document : Int32
+    0
+  end
+
+  def [](node : Int32) : Node
+    @nodes[node]
+  end
+
+  def size : Int32
+    @nodes.size
+  end
+
+  # --- making nodes -----------------------------------------------------
+
+  private def add(node : Node) : Int32
+    @nodes << node
+    @nodes.size - 1
+  end
+
+  def create_fragment : Int32
+    add(Node.new(NodeKind::Fragment, Namespace::None, Tag::Other, @empty, @empty, @empty))
+  end
+
+  # An element with the `count` attributes from `start` in `attrs`.
+  def create_element(namespace : Namespace, name : Tape::String, start : Int32, count : Int32) : Int32
+    node = Node.new(NodeKind::Element, namespace, tag_of(name), name, @empty, @empty)
+    node.attrs_start = start
+    node.attrs_count = count
+    add(node)
+  end
+
+  def create_element(namespace : Namespace, name : Tape::String, tag : Tag, start : Int32, count : Int32) : Int32
+    node = Node.new(NodeKind::Element, namespace, tag, name, @empty, @empty)
+    node.attrs_start = start
+    node.attrs_count = count
+    add(node)
+  end
+
+  def create_text(text : Tape::String) : Int32
+    add(Node.new(NodeKind::Text, Namespace::None, Tag::Other, @empty, text, @empty))
+  end
+
+  def create_comment(text : Tape::String) : Int32
+    add(Node.new(NodeKind::Comment, Namespace::None, Tag::Other, @empty, text, @empty))
+  end
+
+  def create_doctype(name : Tape::String, public_id : Tape::String, system_id : Tape::String) : Int32
+    add(Node.new(NodeKind::Doctype, Namespace::None, Tag::Other, name, public_id, system_id))
+  end
+
+  def set_contents(node : Int32, fragment : Int32) : Nil
+    entry = @nodes[node]
+    entry.contents = fragment
+    @nodes[node] = entry
+  end
+
+  # --- reading ----------------------------------------------------------
+
+  def kind(node : Int32) : NodeKind
+    @nodes[node].kind
+  end
+
+  def parent(node : Int32) : Int32
+    @nodes[node].parent
+  end
+
+  def first_child(node : Int32) : Int32
+    @nodes[node].first_child
+  end
+
+  def last_child(node : Int32) : Int32
+    @nodes[node].last_child
+  end
+
+  def next_sibling(node : Int32) : Int32
+    @nodes[node].next
+  end
+
+  def previous_sibling(node : Int32) : Int32
+    @nodes[node].previous
+  end
+
+  def tag(node : Int32) : Tag
+    @nodes[node].tag
+  end
+
+  def namespace(node : Int32) : Namespace
+    @nodes[node].namespace
+  end
+
+  def name(node : Int32) : Tape::String
+    @nodes[node].name
+  end
+
+  def element?(node : Int32) : Bool
+    @nodes[node].kind == NodeKind::Element
+  end
+
+  def text?(node : Int32) : Bool
+    @nodes[node].kind == NodeKind::Text
+  end
+
+  # Whether *node* is the HTML element *tag*.
+  def html?(node : Int32, tag : Tag) : Bool
+    entry = @nodes[node]
+    entry.tag == tag && entry.namespace == Namespace::Html && entry.kind == NodeKind::Element
+  end
+
+  def contents(node : Int32) : Int32
+    @nodes[node].contents
+  end
+
+  def attrs_start(node : Int32) : Int32
+    @nodes[node].attrs_start
+  end
+
+  def attrs_count(node : Int32) : Int32
+    @nodes[node].attrs_count
+  end
+
+  def attr(node : Int32, index : Int32) : Attr
+    @attrs[@nodes[node].attrs_start + index]
+  end
+
+  # A text's or comment's data; a text's pieces joined first.
+  def data(node : Int32) : Tape::String
+    entry = @nodes[node]
+    return entry.data if entry.pieces_first == NO_NODE
+    size = entry.data.bytesize
+    piece = entry.pieces_first
+    while piece != NO_NODE
+      size = size + @pieces[piece].text.bytesize
+      piece = @pieces[piece].next
+    end
+    writer = Tape::String::Writer.new(size)
+    writer.append(entry.data)
+    piece = entry.pieces_first
+    while piece != NO_NODE
+      writer.append(@pieces[piece].text)
+      piece = @pieces[piece].next
+    end
+    entry.data = writer.finish
+    entry.pieces_first = NO_NODE
+    entry.pieces_last = NO_NODE
+    @nodes[node] = entry
+    entry.data
+  end
+
+  def public_id(node : Int32) : Tape::String
+    @nodes[node].data
+  end
+
+  def system_id(node : Int32) : Tape::String
+    @nodes[node].system_id
+  end
+
+  # --- changing the tree ------------------------------------------------
+
+  # *node* out of its parent's children.
+  def detach(node : Int32) : Nil
+    entry = @nodes[node]
+    parent = entry.parent
+    return if parent == NO_NODE
+    if entry.previous != NO_NODE
+      sibling = @nodes[entry.previous]
+      sibling.next = entry.next
+      @nodes[entry.previous] = sibling
+    else
+      owner = @nodes[parent]
+      owner.first_child = entry.next
+      @nodes[parent] = owner
+    end
+    if entry.next != NO_NODE
+      sibling = @nodes[entry.next]
+      sibling.previous = entry.previous
+      @nodes[entry.next] = sibling
+    else
+      owner = @nodes[parent]
+      owner.last_child = entry.previous
+      @nodes[parent] = owner
+    end
+    entry.parent = NO_NODE
+    entry.previous = NO_NODE
+    entry.next = NO_NODE
+    @nodes[node] = entry
+  end
+
+  # *child* as *parent*'s last child, out of wherever it was.
+  def append(parent : Int32, child : Int32) : Nil
+    detach(child)
+    owner = @nodes[parent]
+    last = owner.last_child
+    entry = @nodes[child]
+    entry.parent = parent
+    entry.previous = last
+    entry.next = NO_NODE
+    @nodes[child] = entry
+    if last == NO_NODE
+      owner.first_child = child
+    else
+      sibling = @nodes[last]
+      sibling.next = child
+      @nodes[last] = sibling
+    end
+    owner.last_child = child
+    @nodes[parent] = owner
+  end
+
+  # *child* just before *sibling*, out of wherever it was.
+  def insert_before(sibling : Int32, child : Int32) : Nil
+    detach(child)
+    after = @nodes[sibling]
+    parent = after.parent
+    before = after.previous
+    entry = @nodes[child]
+    entry.parent = parent
+    entry.previous = before
+    entry.next = sibling
+    @nodes[child] = entry
+    after.previous = child
+    @nodes[sibling] = after
+    if before == NO_NODE
+      owner = @nodes[parent]
+      owner.first_child = child
+      @nodes[parent] = owner
+    else
+      previous = @nodes[before]
+      previous.next = child
+      @nodes[before] = previous
+    end
+  end
+
+  # *text* as *parent*'s last child: joined to it when that is text.
+  def append_text(parent : Int32, text : Tape::String) : Nil
+    last = @nodes[parent].last_child
+    if last != NO_NODE && text?(last)
+      join_text(last, text)
+    else
+      append(parent, create_text(text))
+    end
+  end
+
+  # *text* just before *sibling*: joined to the text before it, if any.
+  def insert_text_before(sibling : Int32, text : Tape::String) : Nil
+    before = @nodes[sibling].previous
+    if before != NO_NODE && text?(before)
+      join_text(before, text)
+    else
+      insert_before(sibling, create_text(text))
+    end
+  end
+
+  private def join_text(node : Int32, text : Tape::String) : Nil
+    return if text.empty?
+    entry = @nodes[node]
+    if entry.data.empty? && entry.pieces_first == NO_NODE
+      entry.data = text
+      @nodes[node] = entry
+      return
+    end
+    @pieces << Piece.new(text)
+    piece = @pieces.size - 1
+    if entry.pieces_last == NO_NODE
+      entry.pieces_first = piece
+    else
+      last = @pieces[entry.pieces_last]
+      last.next = piece
+      @pieces[entry.pieces_last] = last
+    end
+    entry.pieces_last = piece
+    @nodes[node] = entry
+  end
+
+  # *node*'s children appended to *new_parent*'s, in order, as nodes:
+  # text is not joined to text already there.
+  def reparent_children(node : Int32, new_parent : Int32) : Nil
+    child = @nodes[node].first_child
+    while child != NO_NODE
+      following = @nodes[child].next
+      append(new_parent, child)
+      child = following
+    end
+  end
+
+  # The attributes of the `count` from `start` that *node* has no
+  # attribute of the same name for, added to its own.
+  def add_attrs_if_missing(node : Int32, start : Int32, count : Int32) : Nil
+    entry = @nodes[node]
+    added = 0
+    i = 0
+    while i < count
+      candidate = @attrs[start + i]
+      found = false
+      j = 0
+      while j < entry.attrs_count
+        existing = @attrs[entry.attrs_start + j]
+        if existing.name == candidate.name && existing.namespace == candidate.namespace
+          found = true
+          break
+        end
+        j = j + 1
+      end
+      added = added + 1 unless found
+      i = i + 1
+    end
+    return if added == 0
+    new_start = @attrs.size
+    j = 0
+    while j < entry.attrs_count
+      @attrs << @attrs[entry.attrs_start + j]
+      j = j + 1
+    end
+    i = 0
+    while i < count
+      candidate = @attrs[start + i]
+      found = false
+      j = 0
+      while j < entry.attrs_count
+        existing = @attrs[entry.attrs_start + j]
+        if existing.name == candidate.name && existing.namespace == candidate.namespace
+          found = true
+          break
+        end
+        j = j + 1
+      end
+      @attrs << candidate unless found
+      i = i + 1
+    end
+    entry.attrs_start = new_start
+    entry.attrs_count = entry.attrs_count + added
+    @nodes[node] = entry
+  end
+end

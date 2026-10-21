@@ -1,0 +1,17 @@
+# Writes spec/golden/ from html5lib-tests' inputs with the html5ever that
+# Campfire's Rust port uses (0.35, vendored with Gumbo's fixes), the parser
+# htmlparse is held to. Not part of the ris module; needs the Rust port's
+# checkout beside rispacks:
+#
+#   cargo run --release --offline --manifest-path oracle/Cargo.toml
+[package]
+name = "htmlparse_oracle"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+html5ever = { path = "../../../once-campfire-rust/crates/richtext/vendor/html5ever" }
+serde_json = "1"
+
+[workspace]

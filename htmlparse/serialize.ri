@@ -1,0 +1,142 @@
+# A tree written back as HTML, into the caller's tape writer: html5ever
+# 0.35's serializer (serialize/mod.rs), which is also what Nokogiri's
+# `html_standard_serialize` writes, bar the two options.
+module htmlparse/serialize
+
+import std/int
+import htmlparse/tags::{Tag}
+import htmlparse/dom::{Dom, NodeKind, Namespace}
+
+pub struct SerializeOptions
+  # Whether `<` and `>` in attribute values are written `&lt;` and
+  # `&gt;`, as the HTML standard has since 2025; html5ever 0.35 and
+  # Nokogiri leave them.
+  property escape_attribute_brackets : Bool
+  # Whether a `<noscript>`'s text is written as it is, not escaped:
+  # html5ever does so when scripting is enabled, Nokogiri always.
+  property raw_noscript : Bool
+
+  def initialize(@escape_attribute_brackets : Bool = false, @raw_noscript : Bool = true)
+  end
+end
+
+# *node* as HTML: an element with its tags, a document or fragment as
+# its children.
+pub def serialize(dom : Dom, node : Int32, writer : Tape::String::Writer, options : SerializeOptions) : Nil
+  case dom.kind(node)
+  when NodeKind::Document, NodeKind::Fragment
+    serialize_children(dom, node, writer, options)
+  else
+    serialize_node(dom, node, writer, options)
+  end
+end
+
+# *node*'s children as HTML (`inner_html`).
+pub def serialize_children(dom : Dom, node : Int32, writer : Tape::String::Writer, options : SerializeOptions) : Nil
+  child = dom.first_child(node)
+  while child >= 0
+    serialize_node(dom, child, writer, options)
+    child = dom.next_sibling(child)
+  end
+end
+
+private def serialize_node(dom : Dom, node : Int32, writer : Tape::String::Writer, options : SerializeOptions) : Nil
+  case dom.kind(node)
+  when NodeKind::Element
+    writer << '<' << dom.name(node)
+    i = 0
+    count = dom.attrs_count(node)
+    while i < count
+      attr = dom.attr(node, i)
+      writer << ' '
+      case attr.namespace
+      when Namespace::Xml.value
+        writer << "xml:"
+      when Namespace::Xmlns.value
+        writer << "xmlns:" unless attr.name == "xmlns"
+      when Namespace::XLink.value
+        writer << "xlink:"
+      end
+      writer << attr.name << "=\""
+      escape(attr.value, writer, true, options.escape_attribute_brackets)
+      writer << '"'
+      i = i + 1
+    end
+    writer << '>'
+    return if dom.namespace(node) == Namespace::Html && void?(dom.tag(node))
+    contents = dom.contents(node)
+    serialize_children(dom, contents, writer, options) if contents >= 0
+    serialize_children(dom, node, writer, options)
+    writer << "</" << dom.name(node) << '>'
+  when NodeKind::Text
+    parent = dom.parent(node)
+    if parent >= 0 && raw_text?(dom, parent, options)
+      writer << dom.data(node)
+    else
+      escape(dom.data(node), writer, false, false)
+    end
+  when NodeKind::Comment
+    writer << "<!--" << dom.data(node) << "-->"
+  when NodeKind::Doctype
+    writer << "<!DOCTYPE " << dom.name(node) << '>'
+  else
+    serialize_children(dom, node, writer, options)
+  end
+end
+
+private def void?(tag : Tag) : Bool
+  case tag
+  when Tag::Area, Tag::Base, Tag::Basefont, Tag::Bgsound, Tag::Br, Tag::Col, Tag::Embed, Tag::Frame, Tag::Hr,
+       Tag::Img, Tag::Input, Tag::Keygen, Tag::Link, Tag::Meta, Tag::Param, Tag::Source, Tag::Track, Tag::Wbr
+    true
+  else
+    false
+  end
+end
+
+private def raw_text?(dom : Dom, parent : Int32, options : SerializeOptions) : Bool
+  return false unless dom.element?(parent) && dom.namespace(parent) == Namespace::Html
+  case dom.tag(parent)
+  when Tag::Style, Tag::Script, Tag::Xmp, Tag::Iframe, Tag::Noembed, Tag::Noframes, Tag::Plaintext
+    true
+  when Tag::Noscript
+    options.raw_noscript
+  else
+    false
+  end
+end
+
+# *text* escaped: `&` and U+00A0 always, `"` in an attribute value, `<`
+# and `>` in text, and in an attribute value when *brackets*. Runs that
+# need no escape are written as they are.
+private def escape(text : Tape::String, writer : Tape::String::Writer, attribute : Bool, brackets : Bool) : Nil
+  start = 0
+  i = 0
+  size = text.bytesize
+  while i < size
+    byte = text[i]
+    replacement = ""
+    width = 1
+    if byte == 0x26_u8
+      replacement = "&amp;"
+    elsif byte == 0xc2_u8 && i + 1 < size && text[i + 1] == 0xa0_u8
+      replacement = "&nbsp;"
+      width = 2
+    elsif byte == 0x22_u8 && attribute
+      replacement = "&quot;"
+    elsif byte == 0x3c_u8 && (!attribute || brackets)
+      replacement = "&lt;"
+    elsif byte == 0x3e_u8 && (!attribute || brackets)
+      replacement = "&gt;"
+    end
+    if replacement.empty?
+      i = i + 1
+      next
+    end
+    writer << text[start, i - start] if i > start
+    writer << replacement
+    i = i + width
+    start = i
+  end
+  writer << text[start, size - start] if size > start
+end

@@ -355,7 +355,9 @@ pub struct Tokenizer
   @next : Int32
   @empty : Tape::String
 
-  def initialize(input : Tape::String)
+  # A tokenizer for *input*, adding tags' attributes to *attrs*: a tree
+  # parsed into one that is there already shares its attributes.
+  def initialize(input : Tape::String, attrs : Tape::Array(Attr) = Tape::Array(Attr).new)
     @input = input
     @size = input.bytesize
     @pos = 0
@@ -368,7 +370,8 @@ pub struct Tokenizer
     @foreign_content = false
     @discard_bom = true
     @max_attributes = 0
-    @attrs = Tape::Array(Attr).new
+    @attrs = attrs
+    @tag_attrs_start = attrs.size
     @text = Bytes.new(input)
     @temp = Bytes.new(input)
     @tag_name = Bytes.new(input)
@@ -380,7 +383,6 @@ pub struct Tokenizer
     @system_id = Bytes.new(input)
     @tag_kind = TokenKind::StartTag
     @self_closing = false
-    @tag_attrs_start = 0
     @has_doctype_name = false
     @has_public_id = false
     @has_system_id = false

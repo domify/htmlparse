@@ -103,6 +103,14 @@ pub struct Dom
     @nodes << Node.new(NodeKind::Document, Namespace::None, Tag::Other, empty, empty, empty)
   end
 
+  # An empty tree with arrays of its own, for `duplicate` to fill.
+  protected def initialize(attrs : Tape::Array(Attr), empty : Tape::String, capacity : Int32)
+    @empty = empty
+    @nodes = Tape::Array(Node).new(capacity)
+    @attrs = Tape::Array(Attr).new(attrs.size + 4)
+    @pieces = Tape::Array(Piece).new
+  end
+
   def document : Int32
     0
   end
@@ -385,6 +393,86 @@ pub struct Dom
       append(new_parent, child)
       child = following
     end
+  end
+
+  # *attr* among *node*'s attributes: in place of its *index*th, or after
+  # them all when *index* is past them. The node gets a new range, so a
+  # range other nodes share stays as it was.
+  def put_attr(node : Int32, index : Int32, attr : Attr) : Nil
+    entry = @nodes[node]
+    start = @attrs.size
+    i = 0
+    while i < entry.attrs_count
+      @attrs << (i == index ? attr : @attrs[entry.attrs_start + i])
+      i = i + 1
+    end
+    count = entry.attrs_count
+    if index >= count
+      @attrs << attr
+      count = count + 1
+    end
+    entry.attrs_start = start
+    entry.attrs_count = count
+    @nodes[node] = entry
+  end
+
+  # *node*'s attributes: the `count` from `start` in `attrs`.
+  def set_attrs(node : Int32, start : Int32, count : Int32) : Nil
+    entry = @nodes[node]
+    entry.attrs_start = start
+    entry.attrs_count = count
+    @nodes[node] = entry
+  end
+
+  # *node* without its *index*th attribute.
+  def delete_attr(node : Int32, index : Int32) : Nil
+    entry = @nodes[node]
+    start = @attrs.size
+    i = 0
+    while i < entry.attrs_count
+      @attrs << @attrs[entry.attrs_start + i] unless i == index
+      i = i + 1
+    end
+    entry.attrs_start = start
+    entry.attrs_count = entry.attrs_count - 1
+    @nodes[node] = entry
+  end
+
+  # The text of *node*'s text descendants in document order, or its own
+  # data for a text or comment (libxml2's `xmlNodeGetContent`).
+  def text_content(node : Int32, writer : Tape::String::Writer) : Nil
+    kind = @nodes[node].kind
+    if kind == NodeKind::Text || kind == NodeKind::Comment
+      writer << data(node)
+      return
+    end
+    child = @nodes[node].first_child
+    while child != NO_NODE
+      if text?(child)
+        writer << data(child)
+      elsif element?(child)
+        text_content(child, writer)
+      end
+      child = @nodes[child].next
+    end
+  end
+
+  # A copy of the whole tree, nodes at the same indexes, that changes to
+  # either leave the other as it is.
+  def duplicate : Dom
+    copy = Dom.new(@attrs, @empty, @nodes.size)
+    copy.copy_from(self)
+    copy
+  end
+
+  protected def copy_from(other : Dom) : Nil
+    other.nodes.each { |node| @nodes << node }
+    other.attrs.each { |attr| @attrs << attr }
+    other.pieces.each { |piece| @pieces << piece }
+  end
+
+  protected def pieces : Tape::Array(Piece)
+    @pieces
   end
 
   # The attributes of the `count` from `start` that *node* has no

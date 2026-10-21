@@ -203,15 +203,26 @@ pub struct TreeBuilder
   @ignore_lf : Bool
   @foster_parenting : Bool
   @empty : Tape::String
+  # The node this parse's tree hangs from.
+  getter document : Int32
   # What a step hands back with `Reprocess` and `SplitWhitespace`.
   @next_mode : InsertionMode
   @next_token : Tok
 
-  # A tree builder for a document. *max_tree_depth* is Gumbo's limit, 0
-  # for none.
-  def initialize(@tokenizer : Tokenizer, scripting : Bool, template_contents : Bool, max_tree_depth : Int32)
+  # A tree builder for a document of its own. *max_tree_depth* is Gumbo's
+  # limit, 0 for none.
+  def initialize(tokenizer : Tokenizer, scripting : Bool, template_contents : Bool, max_tree_depth : Int32)
+    initialize(tokenizer, scripting, template_contents, max_tree_depth,
+      Dom.new(tokenizer.attrs, tokenizer.input[0, 0]), false)
+  end
+
+  # A tree builder that adds to *dom*, whose attributes *tokenizer*
+  # shares: under a new fragment node standing for the document when
+  # *own_document*, else under *dom*'s document.
+  def initialize(@tokenizer : Tokenizer, scripting : Bool, template_contents : Bool, max_tree_depth : Int32,
+                 @dom : Dom, own_document : Bool)
     @empty = @tokenizer.input[0, 0]
-    @dom = Dom.new(@tokenizer.attrs, @empty)
+    @document = own_document ? @dom.create_fragment : @dom.document
     @scripting = scripting
     @template_contents = template_contents
     @max_open_elements = max_tree_depth > 0 ? max_tree_depth + 1 : 0
@@ -264,12 +275,12 @@ pub struct TreeBuilder
 
   # The fragment's root: the `html` element its nodes are put in.
   def root : Int32
-    child = @dom.first_child(@dom.document)
+    child = @dom.first_child(@document)
     while child != NO_NODE
       return child if @dom.html?(child, Tag::Html)
       child = @dom.next_sibling(child)
     end
-    @dom.document
+    @document
   end
 
   def open_elements_size : Int32
@@ -308,7 +319,7 @@ pub struct TreeBuilder
       if @mode == InsertionMode::Initial
         quirk = doctype_quirks(token)
         node = @dom.create_doctype(token.name, token.public_id, token.system_id)
-        @dom.append(@dom.document, node)
+        @dom.append(@document, node)
         @quirks_mode = quirk
         @mode = InsertionMode::BeforeHtml
       end
@@ -969,7 +980,7 @@ pub struct TreeBuilder
   end
 
   private def append_comment_to_doc(text : Tape::String) : Outcome
-    @dom.append(@dom.document, @dom.create_comment(text))
+    @dom.append(@document, @dom.create_comment(text))
     Outcome::Done
   end
 
@@ -981,7 +992,7 @@ pub struct TreeBuilder
   private def create_root(start : Int32, count : Int32) : Nil
     node = create_element(Namespace::Html, "html".as_tape, Tag::Html, start, count)
     push(node)
-    @dom.append(@dom.document, node)
+    @dom.append(@document, node)
   end
 
   private def insert_element(push : Bool, namespace : Namespace, name : Tape::String, tag : Tag, start : Int32,

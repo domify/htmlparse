@@ -75,47 +75,47 @@ medians.
 Local result, 2026-10-21, AMD Ryzen 7 PRO 6850U, Linux 7.0, rustc 1.99.0,
 ris 0.1.0:
 
-Parse, µs:
+Parse:
 
-| Input | htmlparse | html5ever |
-| --- | ---: | ---: |
-| message, 118 B | 2.6 | 2.9 |
-| rich message, 1 KiB | 39.7 | 38.0 |
-| page, 3 KiB | 79.2 | 96.0 |
-| page, 45 KiB | 937.7 | 1,352.3 |
-| page, 904 KiB | 19,621.0 | 26,297.2 |
-| page, 4.5 MiB | 101,051.5 | 134,113.2 |
+| Input | htmlparse | html5ever | html5ever vs htmlparse |
+| --- | ---: | ---: | ---: |
+| message, 118 B | 2.6 µs | 2.9 µs | 14% slower |
+| rich message, 1 KiB | 39.7 µs | 38.0 µs | 4% faster |
+| page, 3 KiB | 79.2 µs | 96.0 µs | 21% slower |
+| page, 45 KiB | 937.7 µs | 1,352.3 µs | 44% slower |
+| page, 904 KiB | 19,621.0 µs | 26,297.2 µs | 34% slower |
+| page, 4.5 MiB | 101,051.5 µs | 134,113.2 µs | 33% slower |
 
-Serialize, µs:
+Serialize:
 
-| Input | htmlparse | html5ever |
-| --- | ---: | ---: |
-| message, 118 B | 0.3 | 1.0 |
-| rich message, 1 KiB | 3.7 | 11.3 |
-| page, 3 KiB | 6.4 | 17.2 |
-| page, 45 KiB | 90.1 | 278.2 |
-| page, 904 KiB | 2,360.9 | 7,835.6 |
-| page, 4.5 MiB | 12,097.1 | 39,705.4 |
+| Input | htmlparse | html5ever | html5ever vs htmlparse |
+| --- | ---: | ---: | ---: |
+| message, 118 B | 0.3 µs | 1.0 µs | 3.0× slower |
+| rich message, 1 KiB | 3.7 µs | 11.3 µs | 3.1× slower |
+| page, 3 KiB | 6.4 µs | 17.2 µs | 2.7× slower |
+| page, 45 KiB | 90.1 µs | 278.2 µs | 3.1× slower |
+| page, 904 KiB | 2,360.9 µs | 7,835.6 µs | 3.3× slower |
+| page, 4.5 MiB | 12,097.1 µs | 39,705.4 µs | 3.3× slower |
 
-Parsing, htmlparse takes 10 to 30% less time than html5ever on all but
-the rich message, where it is 4% behind; serializing, about a third of
-the time throughout.
+Parsing, html5ever is 14 to 44% slower than htmlparse on every input but
+the rich message, where it is 4% faster; serializing, about three times
+slower throughout.
 
 The memory one parse takes, without serializing: the peak RSS of a
 process that parses the input once, less that of one that only reads it.
 That is whole pages, so it is given for the inputs of 44 KiB and up.
 
-Memory per parse, MiB (and per input byte, bytes):
+Memory per parse:
 
-| Input | htmlparse | html5ever |
-| --- | ---: | ---: |
-| page, 45 KiB | 0.4 (8.6) | 0.6 (14.4) |
-| page, 904 KiB | 9.1 (10.3) | 11.8 (13.4) |
-| page, 4.5 MiB | 45.4 (10.1) | 58.0 (13.0) |
+| Input | htmlparse | html5ever | html5ever vs htmlparse |
+| --- | ---: | ---: | ---: |
+| page, 45 KiB | 0.4 MiB | 0.6 MiB | 68% more |
+| page, 904 KiB | 9.1 MiB | 11.8 MiB | 29% more |
+| page, 4.5 MiB | 45.4 MiB | 58.0 MiB | 28% more |
 
-The tree takes about ten bytes for each byte of input, a fifth less than
-html5ever's. The tape keeps all of it until the parse's `tape do` ends,
-and gives its pages back when it does: a loop of parses faults them in
-again each time, where html5ever's allocator reuses its own. These are
-one machine's numbers, not a promise; `bench/results.json` has the raw
-samples.
+htmlparse's tree takes about ten bytes for each byte of input, and
+html5ever's about 30% more on the larger pages. The tape keeps all of
+it until the parse's `tape do` ends, and gives its pages back when it
+does: a loop of parses faults them in again each time, where html5ever's
+allocator reuses its own. These are one machine's numbers, not a
+promise; `bench/results.json` has the raw samples.

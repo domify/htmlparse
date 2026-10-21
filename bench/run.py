@@ -86,7 +86,12 @@ def main():
     ap.add_argument('--rounds', type=int, default=5)
     ap.add_argument('--scale', type=float, default=1.0, help='multiplies every iteration count')
     ap.add_argument('--output', type=Path, default=ROOT / 'bench/results.json')
+    ap.add_argument('--tables', type=Path, metavar='RESULTS',
+                    help="print the README's tables from a results.json and stop")
     args = ap.parse_args()
+    if args.tables:
+        tables(json.loads(args.tables.read_text())['rows'])
+        return
     build = Path(tempfile.mkdtemp(prefix='htmlparse-bench.'))
     # name: (text, kind, parses per run)
     workloads = {'message': (MESSAGE, 'fragment', 200000), 'rich message': (RICH, 'fragment', 20000),
@@ -154,26 +159,44 @@ def main():
                                            rounds=args.rounds, workloads={k: v[1] for k, v in workloads.items()},
                                            rows=rows), indent=2) + '\n')
 
-    def size(row):
-        return f"{row['bytes']} B" if row['bytes'] < 1024 else f"{row['bytes'] / 1024:,.0f} KiB"
+    tables(rows)
 
-    impls = list(binaries)
 
-    def table(title, value, keep=lambda row: True):
+def tables(rows):
+    """Prints the README's tables: a row per input, a column per parser,
+    and how html5ever's median compares with htmlparse's."""
+    impls = ['htmlparse', 'html5ever']
+    names = list(dict.fromkeys(r['workload'] for r in rows))
+
+    def label(row):
+        size = f"{row['bytes']} B" if row['bytes'] < 1024 else f"{row['bytes'] / 1024:,.0f} KiB"
+        if row['bytes'] >= 2**20:
+            size = f"{row['bytes'] / 2**20:.1f} MiB"
+        return f"{row['workload'] if row['kind'] == 'fragment' else 'page'}, {size}"
+
+    def table(title, key, unit, more, less, digits=1):
         print(title + ':\n')
-        print('| Input | ' + ' | '.join(impls) + ' |')
-        print('| --- |' + ' ---: |' * len(impls))
-        for name in workloads:
+        print('| Input | htmlparse | html5ever | html5ever vs htmlparse |')
+        print('| --- | ---: | ---: | ---: |')
+        for name in names:
             row = {r['impl']: r for r in rows if r['workload'] == name}
-            if keep(row[impls[0]]):
-                print(f"| {name}, {size(row[impls[0]])} | " + ' | '.join(value(row[i]) for i in impls) + ' |')
+            if key not in row['htmlparse']:
+                continue
+            ours, theirs = (row[i][key] for i in impls)
+            if unit == 'MiB':
+                ours, theirs = ours / 1024, theirs / 1024
+            ratio = theirs / ours
+            if ratio >= 2:
+                change = f'{ratio:.1f}× {more}'
+            else:
+                change = f'{abs(ratio - 1) * 100:.0f}% {more if ratio >= 1 else less}'
+            print(f"| {label(row['htmlparse'])} | {ours:,.{digits}f} {unit} | {theirs:,.{digits}f} {unit} | "
+                  f"{change} |")
         print()
 
-    table('Parse, µs', lambda r: f"{r['median_parse_us']:,.1f}")
-    table('Serialize, µs', lambda r: f"{r['median_serialize_us']:,.1f}")
-    table('Memory per parse, MiB (and per input byte, bytes)',
-          lambda r: f"{r['median_parse_memory_kib'] / 1024:.1f} ({r['median_parse_memory_kib'] * 1024 / r['bytes']:.1f})",
-          lambda r: 'median_parse_memory_kib' in r)
+    table('Parse', 'median_parse_us', 'µs', 'slower', 'faster')
+    table('Serialize', 'median_serialize_us', 'µs', 'slower', 'faster')
+    table('Memory per parse', 'median_parse_memory_kib', 'MiB', 'more', 'less')
 
 
 def cpu():

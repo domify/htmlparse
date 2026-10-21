@@ -9,27 +9,19 @@ tokenizer cases.
 ```ris
 import htmlparse::{htmlparse}
 
-tape { puts htmlparse(body) }
+tape do
+  html = htmlparse(body) # a Tape::String: the HTML, parsed and written back
+  puts html
+end
 ```
 
 `htmlparse` parses its input as a fragment in `body` (`document: true`
 for a whole document) and answers the HTML that html5ever's serializer
-writes for it, on the tape, at the same speed as the calls it makes. For
-the tree itself:
+writes for it, on the tape, at the same speed as the calls it makes.
 
-```ris
-import htmlparse/htmlparse/parse::{parse_fragment, Options}
-import htmlparse/htmlparse/dom::{Namespace}
-import htmlparse/htmlparse/serialize::{serialize_children, SerializeOptions}
-
-tape do
-  doc = parse_fragment(body.as_tape, "body".as_tape, Namespace::Html,
-    Options.gumbo)
-  out = Tape::String::Writer.new(body.bytesize)
-  serialize_children(doc.dom, doc.root, out, SerializeOptions.new)
-  puts out
-end
-```
+A longer example, which parses a fragment with `parse_fragment`, walks
+its tree node by node and writes it back, is in `examples/tree.ri`
+(`ris run examples/tree.ri`).
 
 `parse_document` reads a whole document; `Document#root` is then the
 document node.

@@ -1,0 +1,59 @@
+# The tree behind `htmlparse`: a fragment parsed with Nokogiri's options,
+# walked node by node, and written back as HTML.
+#
+#     ris run examples/tree.ri
+module examples/tree
+
+import htmlparse/parse::{parse_fragment, Options}
+import htmlparse/dom::{Dom, NodeKind, Namespace}
+import htmlparse/serialize::{serialize_children, SerializeOptions}
+
+# *node* and what is under it, one line each, indented by depth.
+def walk(dom : Dom, node : Int32, depth : Int32) : Nil
+  indent = "  " * depth
+  case dom.kind(node)
+  when NodeKind::Element
+    tape do
+      w = Tape::String::Writer.new(64)
+      w << indent << "<" << dom.name(node)
+      i = 0
+      while i < dom.attrs_count(node)
+        attr = dom.attr(node, i)
+        w << " " << attr.name << "=\"" << attr.value << "\""
+        i = i + 1
+      end
+      w << ">"
+      puts w
+    end
+  when NodeKind::Text
+    tape { puts "#{indent}text: #{dom.data(node).to_heap.inspect}" }
+  when NodeKind::Comment
+    tape { puts "#{indent}comment: #{dom.data(node).to_heap.inspect}" }
+  end
+  child = dom.first_child(node)
+  while child >= 0
+    walk(dom, child, depth + 1)
+    child = dom.next_sibling(child)
+  end
+end
+
+body = %(<p class="lead">Tere <b>maailm<p>Teine &amp; <a href="/x">link</a><!-- end -->)
+
+tape do
+  # Parsed as html5ever parses a fragment in `body`; `Options.new` for
+  # html5ever's defaults. The tree is on the tape, so it lives until
+  # this block ends.
+  doc = parse_fragment(body.as_tape, "body".as_tape, Namespace::Html, Options.gumbo)
+
+  # `doc.root` is the element the fragment's nodes are the children of.
+  child = doc.dom.first_child(doc.root)
+  while child >= 0
+    walk(doc.dom, child, 0)
+    child = doc.dom.next_sibling(child)
+  end
+
+  # Back to HTML: what `htmlparse(body)` answers.
+  w = Tape::String::Writer.new(body.bytesize)
+  serialize_children(doc.dom, doc.root, w, SerializeOptions.new)
+  puts w
+end

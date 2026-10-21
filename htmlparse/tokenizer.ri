@@ -428,7 +428,11 @@ pub struct Tokenizer
       discard_byte_order_mark
     end
     while @next >= @queued.size
-      @queued = Tape::Array(Token).new if @next > 0
+      # Emptied rather than made anew: a new array per token would stay on
+      # the tape until the parse ends.
+      while @queued.size > 0
+        @queued.pop
+      end
       @next = 0
       if @ended
         return token(TokenKind::EOF)

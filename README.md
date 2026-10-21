@@ -7,6 +7,17 @@ html5lib-tests' tree construction cases and the same tokens for all 7037
 tokenizer cases.
 
 ```ris
+import htmlparse::{htmlparse}
+
+tape { puts htmlparse(body) }
+```
+
+`htmlparse` parses its input as a fragment in `body` (`document: true`
+for a whole document) and answers the HTML that html5ever's serializer
+writes for it, on the tape, at the same speed as the calls it makes. For
+the tree itself:
+
+```ris
 import htmlparse/htmlparse/parse::{parse_fragment, Options}
 import htmlparse/htmlparse/dom::{Namespace}
 import htmlparse/htmlparse/serialize::{serialize_children, SerializeOptions}

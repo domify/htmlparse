@@ -1,0 +1,30 @@
+# htmlparse in one call: *input* parsed as html5ever parses a fragment in
+# `body`, and written back as its serializer writes it, on the tape.
+#
+#     tape { puts htmlparse(body) }
+#
+# `document: true` parses a whole document instead. For the tree itself,
+# use `parse_fragment` or `parse_document` (htmlparse/parse).
+module htmlparse
+
+import htmlparse/parse::{parse_document, parse_fragment, Options}
+import htmlparse/dom::{Namespace}
+import htmlparse/serialize::{serialize_children, SerializeOptions}
+
+pub def htmlparse(input : Tape::String, options : Options = Options.new, document : Bool = false,
+                  serialize_options : SerializeOptions = SerializeOptions.new) : Tape::String
+  parsed = if document
+             parse_document(input, options)
+           else
+             parse_fragment(input, "body".as_tape, Namespace::Html, options)
+           end
+  writer = Tape::String::Writer.new(input.bytesize + 64)
+  serialize_children(parsed.dom, parsed.root, writer, serialize_options)
+  writer.finish
+end
+
+# The same for a `String`, read where it is: nothing is copied.
+pub def htmlparse(input : String, options : Options = Options.new, document : Bool = false,
+                  serialize_options : SerializeOptions = SerializeOptions.new) : Tape::String
+  htmlparse(input.as_tape, options, document, serialize_options)
+end

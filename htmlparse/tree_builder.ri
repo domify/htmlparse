@@ -213,7 +213,7 @@ pub struct TreeBuilder
   # limit, 0 for none.
   def initialize(tokenizer : Tokenizer, scripting : Bool, template_contents : Bool, max_tree_depth : Int32)
     initialize(tokenizer, scripting, template_contents, max_tree_depth,
-      Dom.new(tokenizer.attrs, tokenizer.input[0, 0]), false)
+      Dom.new(tokenizer.attrs, tokenizer.input[0, 0], tokenizer.input.bytesize // 8 + 64), false)
   end
 
   # A tree builder that adds to *dom*, whose attributes *tokenizer*

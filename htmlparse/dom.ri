@@ -95,20 +95,13 @@ pub struct Dom
   @pieces : Tape::Array(Piece)
   @empty : Tape::String
 
-  # A document node, 0, with *attrs* holding the attributes to come.
-  def initialize(@attrs : Tape::Array(Attr), empty : Tape::String)
-    @empty = empty
-    @nodes = Tape::Array(Node).new(64)
-    @pieces = Tape::Array(Piece).new
-    @nodes << Node.new(NodeKind::Document, Namespace::None, Tag::Other, empty, empty, empty)
-  end
-
-  # An empty tree with arrays of its own, for `duplicate` to fill.
-  protected def initialize(attrs : Tape::Array(Attr), empty : Tape::String, capacity : Int32)
+  # A document node, 0, with *attrs* holding the attributes to come and
+  # room for *capacity* nodes.
+  def initialize(@attrs : Tape::Array(Attr), empty : Tape::String, capacity : Int32 = 64)
     @empty = empty
     @nodes = Tape::Array(Node).new(capacity)
-    @attrs = Tape::Array(Attr).new(attrs.size + 4)
     @pieces = Tape::Array(Piece).new
+    @nodes << Node.new(NodeKind::Document, Namespace::None, Tag::Other, empty, empty, empty)
   end
 
   def document : Int32
@@ -460,12 +453,13 @@ pub struct Dom
   # A copy of the whole tree, nodes at the same indexes, that changes to
   # either leave the other as it is.
   def duplicate : Dom
-    copy = Dom.new(@attrs, @empty, @nodes.size)
+    copy = Dom.new(Tape::Array(Attr).new(@attrs.size + 4), @empty, @nodes.size)
     copy.copy_from(self)
     copy
   end
 
   protected def copy_from(other : Dom) : Nil
+    @nodes.pop # the document node `initialize` made; *other*'s takes its place
     other.nodes.each { |node| @nodes << node }
     other.attrs.each { |attr| @attrs << attr }
     other.pieces.each { |piece| @pieces << piece }

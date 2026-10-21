@@ -355,9 +355,20 @@ pub struct Tokenizer
   @next : Int32
   @empty : Tape::String
 
+  # A tokenizer for *input*, with room for the attributes of most pages
+  # that size.
+  #
+  # The tree's arrays are made big enough at the start, here and in
+  # `TreeBuilder`'s `Dom.new`: one that grows when it is not at the tape's
+  # end moves to a mapping of its own, a megabyte at least, which a parse
+  # of a short fragment would make and unmap every time.
+  def initialize(input : Tape::String)
+    initialize(input, Tape::Array(Attr).new(input.bytesize // 16 + 16))
+  end
+
   # A tokenizer for *input*, adding tags' attributes to *attrs*: a tree
   # parsed into one that is there already shares its attributes.
-  def initialize(input : Tape::String, attrs : Tape::Array(Attr) = Tape::Array(Attr).new)
+  def initialize(input : Tape::String, attrs : Tape::Array(Attr))
     @input = input
     @size = input.bytesize
     @pos = 0

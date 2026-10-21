@@ -1,0 +1,57 @@
+# The ris side of bench/run.py's threaded runs: *threads* threads (the
+# third argument), each parsing the file named first *n* times (the
+# second) as bench/parse.ri does, every parse on the thread's own tape.
+# Prints a checksum of every output and the nanoseconds from the first
+# start to the last join.
+module bench/threads
+
+import std/text
+import std/int
+import std/file::{File}
+import std/time::{Time}
+import htmlparse::{htmlparse}
+
+# The threads' running checksum, a word in a mapping of its own that
+# they all add to.
+class Total
+  @@page : UInt64 = 0_u64
+
+  def self.setup : Nil
+    @@page = __iyi_mmap(4096_u64).address
+  end
+
+  def self.sum : Pointer(Atomic(UInt64))
+    Pointer(Atomic(UInt64)).new(@@page)
+  end
+end
+
+def work(input : String, n : Int32, fragment : Bool) : Nil
+  sum = 0_u64
+  i = 0
+  while i < n
+    tape do
+      hash = 14695981039346656037_u64
+      htmlparse(input, document: !fragment).each_byte { |byte| hash = (hash ^ byte.to_u64) &* 1099511628211_u64 }
+      sum = sum &+ hash
+    end
+    i = i + 1
+  end
+  Total.sum.value.add(sum)
+end
+
+input = File.read(Program.args[0])
+n = Program.args[1].to_i
+count = Program.args[2].to_i
+fragment = Program.args.size > 3 && Program.args[3] == "fragment"
+Total.setup
+started = Time.monotonic
+threads = Array(IyiThread).new
+t = 0
+while t < count
+  threads << IyiThread.start { work(input, n, fragment) }
+  t = t + 1
+end
+threads.each { |thread| thread.join }
+took = Time.monotonic - started
+puts Total.sum.value.get
+puts took.total_nanoseconds.to_i64

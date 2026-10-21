@@ -79,27 +79,26 @@ Parse:
 
 | Input | htmlparse | html5ever | html5ever vs htmlparse |
 | --- | ---: | ---: | ---: |
-| message, 118 B | 2.6 µs | 2.9 µs | 14% slower |
-| rich message, 1 KiB | 39.7 µs | 38.0 µs | 4% faster |
-| page, 3 KiB | 79.2 µs | 96.0 µs | 21% slower |
-| page, 45 KiB | 937.7 µs | 1,352.3 µs | 44% slower |
-| page, 904 KiB | 19,621.0 µs | 26,297.2 µs | 34% slower |
-| page, 4.5 MiB | 101,051.5 µs | 134,113.2 µs | 33% slower |
+| message, 118 B | 2.5 µs | 2.9 µs | 18% slower |
+| rich message, 1 KiB | 25.5 µs | 36.2 µs | 42% slower |
+| page, 3 KiB | 55.5 µs | 92.0 µs | 66% slower |
+| page, 45 KiB | 766.9 µs | 1,306.6 µs | 70% slower |
+| page, 904 KiB | 18,013.7 µs | 25,259.9 µs | 40% slower |
+| page, 4.5 MiB | 94,194.9 µs | 130,299.8 µs | 38% slower |
 
 Serialize:
 
 | Input | htmlparse | html5ever | html5ever vs htmlparse |
 | --- | ---: | ---: | ---: |
-| message, 118 B | 0.3 µs | 1.0 µs | 3.0× slower |
-| rich message, 1 KiB | 3.7 µs | 11.3 µs | 3.1× slower |
-| page, 3 KiB | 6.4 µs | 17.2 µs | 2.7× slower |
-| page, 45 KiB | 90.1 µs | 278.2 µs | 3.1× slower |
-| page, 904 KiB | 2,360.9 µs | 7,835.6 µs | 3.3× slower |
-| page, 4.5 MiB | 12,097.1 µs | 39,705.4 µs | 3.3× slower |
+| message, 118 B | 0.3 µs | 0.9 µs | 3.0× slower |
+| rich message, 1 KiB | 3.5 µs | 10.8 µs | 3.1× slower |
+| page, 3 KiB | 6.2 µs | 16.4 µs | 2.7× slower |
+| page, 45 KiB | 89.8 µs | 268.1 µs | 3.0× slower |
+| page, 904 KiB | 2,230.5 µs | 6,806.3 µs | 3.1× slower |
+| page, 4.5 MiB | 11,992.8 µs | 39,140.1 µs | 3.3× slower |
 
-Parsing, html5ever is 14 to 44% slower than htmlparse on every input but
-the rich message, where it is 4% faster; serializing, about three times
-slower throughout.
+Parsing, html5ever is 18 to 70% slower than htmlparse; serializing,
+about three times slower throughout.
 
 The memory one parse takes, without serializing: the peak RSS of a
 process that parses the input once, less that of one that only reads it.
@@ -109,13 +108,41 @@ Memory per parse:
 
 | Input | htmlparse | html5ever | html5ever vs htmlparse |
 | --- | ---: | ---: | ---: |
-| page, 45 KiB | 0.4 MiB | 0.6 MiB | 68% more |
-| page, 904 KiB | 9.1 MiB | 11.8 MiB | 29% more |
-| page, 4.5 MiB | 45.4 MiB | 58.0 MiB | 28% more |
+| page, 45 KiB | 0.5 MiB | 0.6 MiB | 28% more |
+| page, 904 KiB | 7.5 MiB | 11.8 MiB | 57% more |
+| page, 4.5 MiB | 37.7 MiB | 58.2 MiB | 54% more |
 
-htmlparse's tree takes about ten bytes for each byte of input, and
-html5ever's about 30% more on the larger pages. The tape keeps all of
+htmlparse's tree takes about eight bytes for each byte of input, and
+html5ever's about half as much again on the larger pages. The tape keeps all of
 it until the parse's `tape do` ends, and gives its pages back when it
 does: a loop of parses faults them in again each time, where html5ever's
-allocator reuses its own. These are one machine's numbers, not a
+allocator reuses its own.
+
+On threads, `bench/threads.ri` and `bench/rust/src/bin/threads.rs`: 1
+thread and then 8 (`--threads`) at once, each parsing and serializing the
+input as many times as a single run does, `htmlparse(input)` on its own
+tape; parses per second over all of them, from the first start to the
+last join. The CPU has 8 cores, 16 hardware threads.
+
+Parses and serializations per second on 8 threads:
+
+| Input | htmlparse | html5ever | html5ever vs htmlparse |
+| --- | ---: | ---: | ---: |
+| message, 118 B | 2,083,256 | 1,478,438 | 41% slower |
+| rich message, 1 KiB | 190,547 | 113,655 | 68% slower |
+| page, 45 KiB | 6,862 | 3,544 | 94% slower |
+| page, 904 KiB | 272 | 160 | 70% slower |
+
+From 1 thread to 8, how many times as many per second:
+
+| Input | htmlparse | html5ever |
+| --- | ---: | ---: |
+| message, 118 B | 6.4× | 6.2× |
+| rich message, 1 KiB | 6.1× | 6.1× |
+| page, 45 KiB | 6.4× | 6.2× |
+| page, 904 KiB | 6.1× | 5.8× |
+
+Each thread's tape is its own, so the parses share nothing and need no
+lock: htmlparse goes from 1 thread to 8 about as html5ever does, six
+times, and keeps its lead. These are one machine's numbers, not a
 promise; `bench/results.json` has the raw samples.

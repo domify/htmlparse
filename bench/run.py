@@ -68,6 +68,9 @@ def page(articles):
     return PAGE.format(title=f'{articles} articles', nav=nav, articles=body)
 
 
+# The inputs the threaded runs take.
+THREADED = ('message', 'rich message', 'medium', 'large')
+
 MESSAGE = ('<div>Tere <strong>kõigile</strong>! Kas nägite <a href="https://example.com/a?b=1&amp;c=2">'
            'seda</a>? &#x1F600;</div>')
 RICH = ('''<div><h1>Release notes</h1><p>Hello <b>team</b>, a few things from this week:</p>
@@ -85,12 +88,14 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--rounds', type=int, default=5)
     ap.add_argument('--scale', type=float, default=1.0, help='multiplies every iteration count')
+    ap.add_argument('--threads', type=int, default=8, help='threads for the threaded runs')
     ap.add_argument('--output', type=Path, default=ROOT / 'bench/results.json')
     ap.add_argument('--tables', type=Path, metavar='RESULTS',
                     help="print the README's tables from a results.json and stop")
     args = ap.parse_args()
     if args.tables:
-        tables(json.loads(args.tables.read_text())['rows'])
+        results = json.loads(args.tables.read_text())
+        tables(results['rows'], results.get('threaded', []))
         return
     build = Path(tempfile.mkdtemp(prefix='htmlparse-bench.'))
     # name: (text, kind, parses per run)
@@ -104,6 +109,8 @@ def main():
     env = dict(os.environ, IYI_PATH=f'{ROOT}:' + subprocess.check_output([ris, 'env', 'IYI_PATH'], text=True).strip(),
                CARGO_TARGET_DIR=str(build / 'target'))
     subprocess.run([ris, 'build', '--release', str(ROOT / 'bench/parse.ri'), '-o', str(build / 'ris')],
+                   cwd=ROOT, env=env, check=True)
+    subprocess.run([ris, 'build', '--release', str(ROOT / 'bench/threads.ri'), '-o', str(build / 'ris-threads')],
                    cwd=ROOT, env=env, check=True)
     subprocess.run(['cargo', 'build', '--release', '--manifest-path', str(ROOT / 'bench/rust/Cargo.toml')],
                    env=env, check=True)
@@ -155,14 +162,52 @@ def main():
         row['median_parse_mib_s'] = row['bytes'] / (row['median_parse_us'] / 1e6) / 2**20
         if row['memory']:
             row['median_parse_memory_kib'] = statistics.median(row['memory'])
-    args.output.write_text(json.dumps(dict(platform=platform.platform(), cpu=cpu(), versions=versions,
-                                           rounds=args.rounds, workloads={k: v[1] for k, v in workloads.items()},
-                                           rows=rows), indent=2) + '\n')
 
-    tables(rows)
+    # The same parse and serialization on 1 and on --threads threads at
+    # once, each thread doing the single run's count: parses per second
+    # over all of them, from the first start to the last join.
+    threaded_binaries = {'htmlparse': build / 'ris-threads', 'html5ever': build / 'target/release/threads'}
+    threaded = [dict(impl=impl, workload=name, kind=kind, bytes=len(text.encode()), threads=count,
+                     iterations=max(1, int(n * args.scale)), binary=str(binary), input=str(build / f'{i}.html'),
+                     samples=[])
+                for impl, binary in threaded_binaries.items()
+                for i, (name, (text, kind, n)) in enumerate(workloads.items()) if name in THREADED
+                for count in (1, args.threads)]
+
+    def run_threaded(row):
+        result = subprocess.run([row['binary'], row['input'], str(row['iterations']), str(row['threads']),
+                                 row['kind']], capture_output=True, text=True)
+        if result.returncode != 0:
+            raise SystemExit(f"{row['impl']} {row['workload']} on {row['threads']} threads failed:\n{result.stderr}")
+        checksum, nanos = result.stdout.split()
+        return dict(checksum=checksum, wall_ns=int(nanos))
+
+    for row in threaded:
+        row['warmup'] = run_threaded(row)
+    for _ in range(args.rounds):
+        order = list(threaded)
+        rng.shuffle(order)
+        for row in order:
+            row['samples'].append(run_threaded(row))
+    for name in THREADED:
+        for count in (1, args.threads):
+            sums = {s['checksum'] for r in threaded if r['workload'] == name and r['threads'] == count
+                    for s in [r['warmup'], *r['samples']]}
+            if len(sums) != 1:
+                raise SystemExit(f'{name} on {count} threads: outputs differ: {sums}')
+    for row in threaded:
+        row['median_parses_per_s'] = row['threads'] * row['iterations'] / (
+            statistics.median(s['wall_ns'] for s in row['samples']) / 1e9)
+
+    args.output.write_text(json.dumps(dict(platform=platform.platform(), cpu=cpu(), cores=os.cpu_count(),
+                                           versions=versions, rounds=args.rounds,
+                                           workloads={k: v[1] for k, v in workloads.items()},
+                                           rows=rows, threaded=threaded), indent=2) + '\n')
+
+    tables(rows, threaded)
 
 
-def tables(rows):
+def tables(rows, threaded=()):
     """Prints the README's tables: a row per input, a column per parser,
     and how html5ever's median compares with htmlparse's."""
     impls = ['htmlparse', 'html5ever']
@@ -197,6 +242,36 @@ def tables(rows):
     table('Parse', 'median_parse_us', 'µs', 'slower', 'faster')
     table('Serialize', 'median_serialize_us', 'µs', 'slower', 'faster')
     table('Memory per parse', 'median_parse_memory_kib', 'MiB', 'more', 'less')
+    if not threaded:
+        return
+
+    most = max(r['threads'] for r in threaded)
+    names = list(dict.fromkeys(r['workload'] for r in threaded))
+
+    def rates(name):
+        return {(r['impl'], r['threads']): r['median_parses_per_s'] for r in threaded if r['workload'] == name}
+
+    def first(name):
+        return next(r for r in threaded if r['workload'] == name)
+
+    print(f'Parses and serializations per second on {most} threads:\n')
+    print('| Input | htmlparse | html5ever | html5ever vs htmlparse |')
+    print('| --- | ---: | ---: | ---: |')
+    for name in names:
+        rate = rates(name)
+        ours, theirs = rate['htmlparse', most], rate['html5ever', most]
+        ratio = ours / theirs
+        change = f'{ratio:.1f}× slower' if ratio >= 2 else f"{abs(ratio - 1) * 100:.0f}% {'slower' if ratio >= 1 else 'faster'}"
+        print(f"| {label(first(name))} | {ours:,.0f} | {theirs:,.0f} | {change} |")
+    print()
+    print(f'From 1 thread to {most}, how many times as many per second:\n')
+    print('| Input | htmlparse | html5ever |')
+    print('| --- | ---: | ---: |')
+    for name in names:
+        rate = rates(name)
+        print(f"| {label(first(name))} | {rate['htmlparse', most] / rate['htmlparse', 1]:.1f}× | "
+              f"{rate['html5ever', most] / rate['html5ever', 1]:.1f}× |")
+    print()
 
 
 def cpu():

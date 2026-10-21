@@ -1,0 +1,673 @@
+{
+  "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+  "cpu": "AMD Ryzen 7 PRO 6850U with Radeon Graphics",
+  "versions": {
+    "ris": "ris 0.1.0 (built on iyi 0.18.0, built on Crystal 1.22.0-dev [f917d75c3] (2026-10-21))\n\nThe compiler was not built in release mode.",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)"
+  },
+  "rounds": 5,
+  "workloads": {
+    "message": "fragment",
+    "rich message": "fragment",
+    "small": "document",
+    "medium": "document",
+    "large": "document",
+    "huge": "document"
+  },
+  "rows": [
+    {
+      "impl": "htmlparse",
+      "workload": "message",
+      "kind": "fragment",
+      "bytes": 118,
+      "iterations": 200000,
+      "binary": "/tmp/htmlparse-bench.75r0su2e/ris",
+      "input": "/tmp/htmlparse-bench.75r0su2e/0.html",
+      "samples": [
+        {
+          "checksum": "2589808524669502464",
+          "parse_ns": 507579745,
+          "write_ns": 62321556,
+          "peak_rss_kib": 3296
+        },
+        {
+          "checksum": "2589808524669502464",
+          "parse_ns": 515363210,
+          "write_ns": 63385298,
+          "peak_rss_kib": 3184
+        },
+        {
+          "checksum": "2589808524669502464",
+          "parse_ns": 558046180,
+          "write_ns": 68277069,
+          "peak_rss_kib": 3232
+        },
+        {
+          "checksum": "2589808524669502464",
+          "parse_ns": 514134382,
+          "write_ns": 62448071,
+          "peak_rss_kib": 3296
+        },
+        {
+          "checksum": "2589808524669502464",
+          "parse_ns": 516145645,
+          "write_ns": 63451155,
+          "peak_rss_kib": 3180
+        }
+      ],
+      "memory": [],
+      "warmup": {
+        "checksum": "2589808524669502464",
+        "parse_ns": 511739134,
+        "write_ns": 64405511,
+        "peak_rss_kib": 3168
+      },
+      "median_parse_us": 2.5768160499999997,
+      "median_serialize_us": 0.31692649,
+      "median_parse_mib_s": 43.6715571280059
+    },
+    {
+      "impl": "htmlparse",
+      "workload": "rich message",
+      "kind": "fragment",
+      "bytes": 1446,
+      "iterations": 20000,
+      "binary": "/tmp/htmlparse-bench.75r0su2e/ris",
+      "input": "/tmp/htmlparse-bench.75r0su2e/1.html",
+      "samples": [
+        {
+          "checksum": "6960312850691653600",
+          "parse_ns": 794629533,
+          "write_ns": 74589426,
+          "peak_rss_kib": 3404
+        },
+        {
+          "checksum": "6960312850691653600",
+          "parse_ns": 793087182,
+          "write_ns": 73177887,
+          "peak_rss_kib": 3424
+        },
+        {
+          "checksum": "6960312850691653600",
+          "parse_ns": 769674796,
+          "write_ns": 70626950,
+          "peak_rss_kib": 3424
+        },
+        {
+          "checksum": "6960312850691653600",
+          "parse_ns": 848211295,
+          "write_ns": 77855263,
+          "peak_rss_kib": 3420
+        },
+        {
+          "checksum": "6960312850691653600",
+          "parse_ns": 794197585,
+          "write_ns": 73442605,
+          "peak_rss_kib": 3416
+        }
+      ],
+      "memory": [],
+      "warmup": {
+        "checksum": "6960312850691653600",
+        "parse_ns": 774137671,
+        "write_ns": 71963611,
+        "peak_rss_kib": 3404
+      },
+      "median_parse_us": 39.70987925,
+      "median_serialize_us": 3.6721302500000004,
+      "median_parse_mib_s": 34.72720359690939
+    },
+    {
+      "impl": "htmlparse",
+      "workload": "small",
+      "kind": "document",
+      "bytes": 3173,
+      "iterations": 20000,
+      "binary": "/tmp/htmlparse-bench.75r0su2e/ris",
+      "input": "/tmp/htmlparse-bench.75r0su2e/2.html",
+      "samples": [
+        {
+          "checksum": "7076747721837865984",
+          "parse_ns": 1589916886,
+          "write_ns": 127191261,
+          "peak_rss_kib": 3424
+        },
+        {
+          "checksum": "7076747721837865984",
+          "parse_ns": 1584863469,
+          "write_ns": 128614178,
+          "peak_rss_kib": 3424
+        },
+        {
+          "checksum": "7076747721837865984",
+          "parse_ns": 1581576277,
+          "write_ns": 127103757,
+          "peak_rss_kib": 3424
+        },
+        {
+          "checksum": "7076747721837865984",
+          "parse_ns": 1604389400,
+          "write_ns": 127265797,
+          "peak_rss_kib": 3132
+        },
+        {
+          "checksum": "7076747721837865984",
+          "parse_ns": 1571112067,
+          "write_ns": 123918367,
+          "peak_rss_kib": 3408
+        }
+      ],
+      "memory": [],
+      "warmup": {
+        "checksum": "7076747721837865984",
+        "parse_ns": 1560996794,
+        "write_ns": 126968806,
+        "peak_rss_kib": 3424
+      },
+      "median_parse_us": 79.24317345,
+      "median_serialize_us": 6.359563049999999,
+      "median_parse_mib_s": 38.18636324384901
+    },
+    {
+      "impl": "htmlparse",
+      "workload": "medium",
+      "kind": "document",
+      "bytes": 45941,
+      "iterations": 1000,
+      "binary": "/tmp/htmlparse-bench.75r0su2e/ris",
+      "input": "/tmp/htmlparse-bench.75r0su2e/3.html",
+      "samples": [
+        {
+          "checksum": "2784728956082473456",
+          "parse_ns": 937662975,
+          "write_ns": 90126258,
+          "peak_rss_kib": 3776
+        },
+        {
+          "checksum": "2784728956082473456",
+          "parse_ns": 934621818,
+          "write_ns": 90003855,
+          "peak_rss_kib": 3772
+        },
+        {
+          "checksum": "2784728956082473456",
+          "parse_ns": 941810354,
+          "write_ns": 91723044,
+          "peak_rss_kib": 3768
+        },
+        {
+          "checksum": "2784728956082473456",
+          "parse_ns": 936554837,
+          "write_ns": 93303879,
+          "peak_rss_kib": 3764
+        },
+        {
+          "checksum": "2784728956082473456",
+          "parse_ns": 938938812,
+          "write_ns": 89602644,
+          "peak_rss_kib": 3772
+        }
+      ],
+      "memory": [
+        384,
+        440,
+        232,
+        384,
+        388
+      ],
+      "warmup": {
+        "checksum": "2784728956082473456",
+        "parse_ns": 932973674,
+        "write_ns": 91357114,
+        "peak_rss_kib": 3772
+      },
+      "median_parse_us": 937.662975,
+      "median_serialize_us": 90.126258,
+      "median_parse_mib_s": 46.72547913072875,
+      "median_parse_memory_kib": 384
+    },
+    {
+      "impl": "htmlparse",
+      "workload": "large",
+      "kind": "document",
+      "bytes": 925317,
+      "iterations": 50,
+      "binary": "/tmp/htmlparse-bench.75r0su2e/ris",
+      "input": "/tmp/htmlparse-bench.75r0su2e/4.html",
+      "samples": [
+        {
+          "checksum": "6807728046593629904",
+          "parse_ns": 963515083,
+          "write_ns": 115549035,
+          "peak_rss_kib": 14212
+        },
+        {
+          "checksum": "6807728046593629904",
+          "parse_ns": 975845786,
+          "write_ns": 116487540,
+          "peak_rss_kib": 14304
+        },
+        {
+          "checksum": "6807728046593629904",
+          "parse_ns": 981050928,
+          "write_ns": 118793014,
+          "peak_rss_kib": 14444
+        },
+        {
+          "checksum": "6807728046593629904",
+          "parse_ns": 987650097,
+          "write_ns": 118486855,
+          "peak_rss_kib": 14432
+        },
+        {
+          "checksum": "6807728046593629904",
+          "parse_ns": 985254783,
+          "write_ns": 118044958,
+          "peak_rss_kib": 14476
+        }
+      ],
+      "memory": [
+        9472,
+        9272,
+        9280,
+        9344,
+        9480
+      ],
+      "warmup": {
+        "checksum": "6807728046593629904",
+        "parse_ns": 988241010,
+        "write_ns": 117438593,
+        "peak_rss_kib": 14476
+      },
+      "median_parse_us": 19621.01856,
+      "median_serialize_us": 2360.89916,
+      "median_parse_mib_s": 44.974783278227626,
+      "median_parse_memory_kib": 9344
+    },
+    {
+      "impl": "htmlparse",
+      "workload": "huge",
+      "kind": "document",
+      "bytes": 4694804,
+      "iterations": 8,
+      "binary": "/tmp/htmlparse-bench.75r0su2e/ris",
+      "input": "/tmp/htmlparse-bench.75r0su2e/5.html",
+      "samples": [
+        {
+          "checksum": "5529296021080907088",
+          "parse_ns": 808411800,
+          "write_ns": 96776683,
+          "peak_rss_kib": 59488
+        },
+        {
+          "checksum": "5529296021080907088",
+          "parse_ns": 797164811,
+          "write_ns": 96630356,
+          "peak_rss_kib": 59388
+        },
+        {
+          "checksum": "5529296021080907088",
+          "parse_ns": 805114974,
+          "write_ns": 97371935,
+          "peak_rss_kib": 59356
+        },
+        {
+          "checksum": "5529296021080907088",
+          "parse_ns": 813309344,
+          "write_ns": 98043263,
+          "peak_rss_kib": 59244
+        },
+        {
+          "checksum": "5529296021080907088",
+          "parse_ns": 895728836,
+          "write_ns": 96213164,
+          "peak_rss_kib": 59276
+        }
+      ],
+      "memory": [
+        46596,
+        46452,
+        46352,
+        46576,
+        46328
+      ],
+      "warmup": {
+        "checksum": "5529296021080907088",
+        "parse_ns": 805194963,
+        "write_ns": 96209681,
+        "peak_rss_kib": 59140
+      },
+      "median_parse_us": 101051.475,
+      "median_serialize_us": 12097.085375,
+      "median_parse_mib_s": 44.30726018953536,
+      "median_parse_memory_kib": 46452
+    },
+    {
+      "impl": "html5ever",
+      "workload": "message",
+      "kind": "fragment",
+      "bytes": 118,
+      "iterations": 200000,
+      "binary": "/tmp/htmlparse-bench.75r0su2e/target/release/htmlparse_bench",
+      "input": "/tmp/htmlparse-bench.75r0su2e/0.html",
+      "samples": [
+        {
+          "checksum": "2589808524669502464",
+          "parse_ns": 625322884,
+          "write_ns": 202281073,
+          "peak_rss_kib": 3024
+        },
+        {
+          "checksum": "2589808524669502464",
+          "parse_ns": 588743638,
+          "write_ns": 190483999,
+          "peak_rss_kib": 3080
+        },
+        {
+          "checksum": "2589808524669502464",
+          "parse_ns": 585145961,
+          "write_ns": 192157942,
+          "peak_rss_kib": 3024
+        },
+        {
+          "checksum": "2589808524669502464",
+          "parse_ns": 589469016,
+          "write_ns": 193130200,
+          "peak_rss_kib": 3080
+        },
+        {
+          "checksum": "2589808524669502464",
+          "parse_ns": 605762797,
+          "write_ns": 192029639,
+          "peak_rss_kib": 3192
+        }
+      ],
+      "memory": [],
+      "warmup": {
+        "checksum": "2589808524669502464",
+        "parse_ns": 587660118,
+        "write_ns": 189872855,
+        "peak_rss_kib": 3024
+      },
+      "median_parse_us": 2.94734508,
+      "median_serialize_us": 0.96078971,
+      "median_parse_mib_s": 38.18133482216392
+    },
+    {
+      "impl": "html5ever",
+      "workload": "rich message",
+      "kind": "fragment",
+      "bytes": 1446,
+      "iterations": 20000,
+      "binary": "/tmp/htmlparse-bench.75r0su2e/target/release/htmlparse_bench",
+      "input": "/tmp/htmlparse-bench.75r0su2e/1.html",
+      "samples": [
+        {
+          "checksum": "6960312850691653600",
+          "parse_ns": 751779117,
+          "write_ns": 223189854,
+          "peak_rss_kib": 3024
+        },
+        {
+          "checksum": "6960312850691653600",
+          "parse_ns": 780786729,
+          "write_ns": 231518976,
+          "peak_rss_kib": 3144
+        },
+        {
+          "checksum": "6960312850691653600",
+          "parse_ns": 747353948,
+          "write_ns": 223557793,
+          "peak_rss_kib": 3080
+        },
+        {
+          "checksum": "6960312850691653600",
+          "parse_ns": 762067425,
+          "write_ns": 226258758,
+          "peak_rss_kib": 3088
+        },
+        {
+          "checksum": "6960312850691653600",
+          "parse_ns": 759023954,
+          "write_ns": 227474957,
+          "peak_rss_kib": 3024
+        }
+      ],
+      "memory": [],
+      "warmup": {
+        "checksum": "6960312850691653600",
+        "parse_ns": 755711123,
+        "write_ns": 231621235,
+        "peak_rss_kib": 3080
+      },
+      "median_parse_us": 37.951197699999994,
+      "median_serialize_us": 11.312937900000001,
+      "median_parse_mib_s": 36.336483302170926
+    },
+    {
+      "impl": "html5ever",
+      "workload": "small",
+      "kind": "document",
+      "bytes": 3173,
+      "iterations": 20000,
+      "binary": "/tmp/htmlparse-bench.75r0su2e/target/release/htmlparse_bench",
+      "input": "/tmp/htmlparse-bench.75r0su2e/2.html",
+      "samples": [
+        {
+          "checksum": "7076747721837865984",
+          "parse_ns": 1897106013,
+          "write_ns": 338660767,
+          "peak_rss_kib": 3028
+        },
+        {
+          "checksum": "7076747721837865984",
+          "parse_ns": 1939672653,
+          "write_ns": 350691991,
+          "peak_rss_kib": 3024
+        },
+        {
+          "checksum": "7076747721837865984",
+          "parse_ns": 1893429314,
+          "write_ns": 342735826,
+          "peak_rss_kib": 3028
+        },
+        {
+          "checksum": "7076747721837865984",
+          "parse_ns": 1933990536,
+          "write_ns": 345911896,
+          "peak_rss_kib": 3084
+        },
+        {
+          "checksum": "7076747721837865984",
+          "parse_ns": 1920779090,
+          "write_ns": 344879178,
+          "peak_rss_kib": 3020
+        }
+      ],
+      "memory": [],
+      "warmup": {
+        "checksum": "7076747721837865984",
+        "parse_ns": 1898100755,
+        "write_ns": 342898265,
+        "peak_rss_kib": 2956
+      },
+      "median_parse_us": 96.0389545,
+      "median_serialize_us": 17.243958900000003,
+      "median_parse_mib_s": 31.50813773131018
+    },
+    {
+      "impl": "html5ever",
+      "workload": "medium",
+      "kind": "document",
+      "bytes": 45941,
+      "iterations": 1000,
+      "binary": "/tmp/htmlparse-bench.75r0su2e/target/release/htmlparse_bench",
+      "input": "/tmp/htmlparse-bench.75r0su2e/3.html",
+      "samples": [
+        {
+          "checksum": "2784728956082473456",
+          "parse_ns": 1333323999,
+          "write_ns": 277203556,
+          "peak_rss_kib": 3592
+        },
+        {
+          "checksum": "2784728956082473456",
+          "parse_ns": 1355494993,
+          "write_ns": 275872194,
+          "peak_rss_kib": 3720
+        },
+        {
+          "checksum": "2784728956082473456",
+          "parse_ns": 1347830974,
+          "write_ns": 278151464,
+          "peak_rss_kib": 3720
+        },
+        {
+          "checksum": "2784728956082473456",
+          "parse_ns": 1352317470,
+          "write_ns": 282540751,
+          "peak_rss_kib": 3668
+        },
+        {
+          "checksum": "2784728956082473456",
+          "parse_ns": 1359568319,
+          "write_ns": 282195186,
+          "peak_rss_kib": 3704
+        }
+      ],
+      "memory": [
+        576,
+        716,
+        760,
+        568,
+        644
+      ],
+      "warmup": {
+        "checksum": "2784728956082473456",
+        "parse_ns": 1343509008,
+        "write_ns": 279989719,
+        "peak_rss_kib": 3660
+      },
+      "median_parse_us": 1352.31747,
+      "median_serialize_us": 278.151464,
+      "median_parse_mib_s": 32.39827388314338,
+      "median_parse_memory_kib": 644
+    },
+    {
+      "impl": "html5ever",
+      "workload": "large",
+      "kind": "document",
+      "bytes": 925317,
+      "iterations": 50,
+      "binary": "/tmp/htmlparse-bench.75r0su2e/target/release/htmlparse_bench",
+      "input": "/tmp/htmlparse-bench.75r0su2e/4.html",
+      "samples": [
+        {
+          "checksum": "6807728046593629904",
+          "parse_ns": 1306147418,
+          "write_ns": 381110808,
+          "peak_rss_kib": 17572
+        },
+        {
+          "checksum": "6807728046593629904",
+          "parse_ns": 1314859561,
+          "write_ns": 391777633,
+          "peak_rss_kib": 17520
+        },
+        {
+          "checksum": "6807728046593629904",
+          "parse_ns": 1319643064,
+          "write_ns": 394830157,
+          "peak_rss_kib": 17400
+        },
+        {
+          "checksum": "6807728046593629904",
+          "parse_ns": 1313504659,
+          "write_ns": 396885931,
+          "peak_rss_kib": 17508
+        },
+        {
+          "checksum": "6807728046593629904",
+          "parse_ns": 1317976462,
+          "write_ns": 391281058,
+          "peak_rss_kib": 17672
+        }
+      ],
+      "memory": [
+        12072,
+        12076,
+        11776,
+        11712,
+        12220
+      ],
+      "warmup": {
+        "checksum": "6807728046593629904",
+        "parse_ns": 1308425860,
+        "write_ns": 386278605,
+        "peak_rss_kib": 17560
+      },
+      "median_parse_us": 26297.19122,
+      "median_serialize_us": 7835.55266,
+      "median_parse_mib_s": 33.55685594144157,
+      "median_parse_memory_kib": 12072
+    },
+    {
+      "impl": "html5ever",
+      "workload": "huge",
+      "kind": "document",
+      "bytes": 4694804,
+      "iterations": 8,
+      "binary": "/tmp/htmlparse-bench.75r0su2e/target/release/htmlparse_bench",
+      "input": "/tmp/htmlparse-bench.75r0su2e/5.html",
+      "samples": [
+        {
+          "checksum": "5529296021080907088",
+          "parse_ns": 1076262202,
+          "write_ns": 317642837,
+          "peak_rss_kib": 75840
+        },
+        {
+          "checksum": "5529296021080907088",
+          "parse_ns": 1072905818,
+          "write_ns": 316624024,
+          "peak_rss_kib": 76012
+        },
+        {
+          "checksum": "5529296021080907088",
+          "parse_ns": 1074127426,
+          "write_ns": 316737775,
+          "peak_rss_kib": 76240
+        },
+        {
+          "checksum": "5529296021080907088",
+          "parse_ns": 1062111561,
+          "write_ns": 319224159,
+          "peak_rss_kib": 76180
+        },
+        {
+          "checksum": "5529296021080907088",
+          "parse_ns": 1069451804,
+          "write_ns": 319249158,
+          "peak_rss_kib": 76244
+        }
+      ],
+      "memory": [
+        59344,
+        59476,
+        59704,
+        59416,
+        59408
+      ],
+      "warmup": {
+        "checksum": "5529296021080907088",
+        "parse_ns": 1077789811,
+        "write_ns": 332046043,
+        "peak_rss_kib": 76244
+      },
+      "median_parse_us": 134113.22725,
+      "median_serialize_us": 39705.354625,
+      "median_parse_mib_s": 33.38458172373395,
+      "median_parse_memory_kib": 59416
+    }
+  ]
+}

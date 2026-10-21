@@ -1,0 +1,48 @@
+# The ris side of bench/run.py: parses the file named first *n* times
+# (the second argument), as a document or, when the third is `fragment`,
+# as a fragment in `body`, and serializes each tree unless the fourth is
+# `0`, as bench/rust does with html5ever. Prints a checksum of every
+# output and the nanoseconds the parses and the serializations took.
+module bench/parse
+
+import std/text
+import std/int
+import std/file::{File}
+import std/time::{Time}
+import htmlparse/parse::{parse_document, parse_fragment, Options, Document}
+import htmlparse/dom::{Namespace}
+import htmlparse/serialize::{serialize_children, SerializeOptions}
+
+input = File.read(Program.args[0])
+n = Program.args[1].to_i
+fragment = Program.args[2] == "fragment"
+write = Program.args[3] != "0"
+sum = 0_u64
+parsing = 0_i64
+writing = 0_i64
+i = 0
+while i < n
+  tape do
+    started = Time.monotonic
+    document = if fragment
+                 parse_fragment(input.as_tape, "body".as_tape, Namespace::Html, Options.new)
+               else
+                 parse_document(input.as_tape, Options.new)
+               end
+    parsed = Time.monotonic
+    parsing = parsing + (parsed - started).total_nanoseconds.to_i64
+    if write
+      w = Tape::String::Writer.new(input.bytesize)
+      serialize_children(document.dom, document.root, w, SerializeOptions.new)
+      text = w.finish
+      writing = writing + (Time.monotonic - parsed).total_nanoseconds.to_i64
+      hash = 14695981039346656037_u64
+      text.each_byte { |byte| hash = (hash ^ byte.to_u64) &* 1099511628211_u64 }
+      sum = sum &+ hash
+    end
+  end
+  i = i + 1
+end
+puts sum
+puts parsing
+puts writing

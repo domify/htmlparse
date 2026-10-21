@@ -157,23 +157,23 @@ def main():
     def size(row):
         return f"{row['bytes']} B" if row['bytes'] < 1024 else f"{row['bytes'] / 1024:,.0f} KiB"
 
-    print('| Input | Parser | Parse, µs | Parse, MiB/s | Serialize, µs |')
-    print('| --- | --- | ---: | ---: | ---: |')
-    for row in rows_in_order(rows, workloads):
-        print(f"| {row['workload']}, {size(row)} | {row['impl']} | {row['median_parse_us']:,.1f} | "
-              f"{row['median_parse_mib_s']:.1f} | {row['median_serialize_us']:,.1f} |")
-    print()
-    print('| Input | Parser | Memory per parse, MiB | Per input byte |')
-    print('| --- | --- | ---: | ---: |')
-    for row in rows_in_order(rows, workloads):
-        if 'median_parse_memory_kib' in row:
-            kib = row['median_parse_memory_kib']
-            print(f"| {row['workload']}, {size(row)} | {row['impl']} | {kib / 1024:.1f} | "
-                  f"{kib * 1024 / row['bytes']:.1f} |")
+    impls = list(binaries)
 
+    def table(title, value, keep=lambda row: True):
+        print(title + ':\n')
+        print('| Input | ' + ' | '.join(impls) + ' |')
+        print('| --- |' + ' ---: |' * len(impls))
+        for name in workloads:
+            row = {r['impl']: r for r in rows if r['workload'] == name}
+            if keep(row[impls[0]]):
+                print(f"| {name}, {size(row[impls[0]])} | " + ' | '.join(value(row[i]) for i in impls) + ' |')
+        print()
 
-def rows_in_order(rows, workloads):
-    return [r for name in workloads for r in rows if r['workload'] == name]
+    table('Parse, µs', lambda r: f"{r['median_parse_us']:,.1f}")
+    table('Serialize, µs', lambda r: f"{r['median_serialize_us']:,.1f}")
+    table('Memory per parse, MiB (and per input byte, bytes)',
+          lambda r: f"{r['median_parse_memory_kib'] / 1024:.1f} ({r['median_parse_memory_kib'] * 1024 / r['bytes']:.1f})",
+          lambda r: 'median_parse_memory_kib' in r)
 
 
 def cpu():

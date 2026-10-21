@@ -75,20 +75,27 @@ medians.
 Local result, 2026-10-21, AMD Ryzen 7 PRO 6850U, Linux 7.0, rustc 1.99.0,
 ris 0.1.0:
 
-| Input | Parser | Parse, µs | Parse, MiB/s | Serialize, µs |
-| --- | --- | ---: | ---: | ---: |
-| message, 118 B | htmlparse | 2.6 | 43.7 | 0.3 |
-| message, 118 B | html5ever | 2.9 | 38.2 | 1.0 |
-| rich message, 1 KiB | htmlparse | 39.7 | 34.7 | 3.7 |
-| rich message, 1 KiB | html5ever | 38.0 | 36.3 | 11.3 |
-| page, 3 KiB | htmlparse | 79.2 | 38.2 | 6.4 |
-| page, 3 KiB | html5ever | 96.0 | 31.5 | 17.2 |
-| page, 45 KiB | htmlparse | 937.7 | 46.7 | 90.1 |
-| page, 45 KiB | html5ever | 1,352.3 | 32.4 | 278.2 |
-| page, 904 KiB | htmlparse | 19,621.0 | 45.0 | 2,360.9 |
-| page, 904 KiB | html5ever | 26,297.2 | 33.6 | 7,835.6 |
-| page, 4.5 MiB | htmlparse | 101,051.5 | 44.3 | 12,097.1 |
-| page, 4.5 MiB | html5ever | 134,113.2 | 33.4 | 39,705.4 |
+Parse, µs:
+
+| Input | htmlparse | html5ever |
+| --- | ---: | ---: |
+| message, 118 B | 2.6 | 2.9 |
+| rich message, 1 KiB | 39.7 | 38.0 |
+| page, 3 KiB | 79.2 | 96.0 |
+| page, 45 KiB | 937.7 | 1,352.3 |
+| page, 904 KiB | 19,621.0 | 26,297.2 |
+| page, 4.5 MiB | 101,051.5 | 134,113.2 |
+
+Serialize, µs:
+
+| Input | htmlparse | html5ever |
+| --- | ---: | ---: |
+| message, 118 B | 0.3 | 1.0 |
+| rich message, 1 KiB | 3.7 | 11.3 |
+| page, 3 KiB | 6.4 | 17.2 |
+| page, 45 KiB | 90.1 | 278.2 |
+| page, 904 KiB | 2,360.9 | 7,835.6 |
+| page, 4.5 MiB | 12,097.1 | 39,705.4 |
 
 Parsing, htmlparse takes 10 to 30% less time than html5ever on all but
 the rich message, where it is 4% behind; serializing, about a third of
@@ -98,14 +105,13 @@ The memory one parse takes, without serializing: the peak RSS of a
 process that parses the input once, less that of one that only reads it.
 That is whole pages, so it is given for the inputs of 44 KiB and up.
 
-| Input | Parser | Memory per parse, MiB | Per input byte |
-| --- | --- | ---: | ---: |
-| page, 45 KiB | htmlparse | 0.4 | 8.6 |
-| page, 45 KiB | html5ever | 0.6 | 14.4 |
-| page, 904 KiB | htmlparse | 9.1 | 10.3 |
-| page, 904 KiB | html5ever | 11.8 | 13.4 |
-| page, 4.5 MiB | htmlparse | 45.4 | 10.1 |
-| page, 4.5 MiB | html5ever | 58.0 | 13.0 |
+Memory per parse, MiB (and per input byte, bytes):
+
+| Input | htmlparse | html5ever |
+| --- | ---: | ---: |
+| page, 45 KiB | 0.4 (8.6) | 0.6 (14.4) |
+| page, 904 KiB | 9.1 (10.3) | 11.8 (13.4) |
+| page, 4.5 MiB | 45.4 (10.1) | 58.0 (13.0) |
 
 The tree takes about ten bytes for each byte of input, a fifth less than
 html5ever's. The tape keeps all of it until the parse's `tape do` ends,

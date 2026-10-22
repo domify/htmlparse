@@ -327,7 +327,7 @@ pub struct Tokenizer
   # 0 for no limit.
   property max_attributes : Int32
 
-  @pos : Int32
+  @scan : Tape::Scanner
   @size : Int32
   @raw : RawKind
   @doctype_id_system : Bool
@@ -371,7 +371,7 @@ pub struct Tokenizer
   def initialize(input : Tape::String, attrs : Tape::Array(Attr))
     @input = input
     @size = input.bytesize
-    @pos = 0
+    @scan = Tape::Scanner.new(input)
     @state = State::Data
     @raw = RawKind::Rcdata
     @doctype_id_system = false
@@ -435,7 +435,7 @@ pub struct Tokenizer
 
   # The next token; `EOF` at the end, and again after it.
   def next_token : Token
-    if @pos == 0 && @discard_bom
+    if @scan.offset == 0 && @discard_bom
       discard_byte_order_mark
     end
     while @next >= @queued.size
@@ -446,7 +446,7 @@ pub struct Tokenizer
       if @ended
         return token(TokenKind::EOF)
       end
-      if @pos >= @size && !in_char_ref_at_end
+      if @scan.eos? && !in_char_ref_at_end
         @at_eof = true
         eof_step
       else
@@ -463,8 +463,8 @@ pub struct Tokenizer
   end
 
   private def discard_byte_order_mark : Nil
-    if @pos + 3 <= @size && @input[@pos] == 0xef_u8 && @input[@pos + 1] == 0xbb_u8 && @input[@pos + 2] == 0xbf_u8
-      @pos = @pos + 3
+    if @scan.offset + 3 <= @size && @input[@scan.offset] == 0xef_u8 && @input[@scan.offset + 1] == 0xbb_u8 && @input[@scan.offset + 2] == 0xbf_u8
+      @scan.advance(3)
     end
   end
 
@@ -638,43 +638,43 @@ pub struct Tokenizer
   private def eat(pattern : ::String, exact : Bool) : Bool
     wanted_bytes = pattern.as_tape
     count = wanted_bytes.bytesize
-    return false if @pos + count > @size
+    return false if @scan.offset + count > @size
     i = 0
     while i < count
-      byte = @input[@pos + i]
+      byte = @input[@scan.offset + i]
       wanted = wanted_bytes[i]
       return false unless byte == wanted || (!exact && lower(byte) == wanted)
       i = i + 1
     end
-    @pos = @pos + count
+    @scan.advance(count)
     true
   end
 
   private def reconsume(state : State) : Nil
-    @pos = @pos - 1
+    @scan.advance(-1)
     @state = state
   end
 
   # The data states read text up to the next byte that matters as one
   # view: from the position to the first of *stop*'s bytes.
   private def text_run(stop1 : UInt8, stop2 : UInt8, stop3 : UInt8) : Nil
-    start = @pos
-    while @pos < @size
-      byte = @input[@pos]
+    start = @scan.offset
+    while !@scan.eos?
+      byte = @input[@scan.offset]
       break if byte == stop1 || byte == stop2 || byte == stop3
-      @pos = @pos + 1
+      @scan.advance(1)
     end
-    emit_input(start, @pos - start) if @pos > start
+    emit_input(start, @scan.offset - start) if @scan.offset > start
   end
 
   private def value_run(stop1 : UInt8, stop2 : UInt8) : Nil
-    start = @pos
-    while @pos < @size
-      byte = @input[@pos]
+    start = @scan.offset
+    while !@scan.eos?
+      byte = @input[@scan.offset]
       break if byte == stop1 || byte == stop2 || byte == 0_u8
-      @pos = @pos + 1
+      @scan.advance(1)
     end
-    @attr_value.push_input(start, @pos - start) if @pos > start
+    @attr_value.push_input(start, @scan.offset - start) if @scan.offset > start
   end
 
   # One step: reads until a state change or a token, or to the end of the
@@ -682,12 +682,12 @@ pub struct Tokenizer
   private def step : Nil
     case @state
     when State::Data
-      while @pos < @size && @queued.size == @next
+      while !@scan.eos? && @queued.size == @next
         text_run(0x3c_u8, 0x26_u8, 0_u8)
-        break if @pos >= @size
-        at = @pos
+        break if @scan.eos?
+        at = @scan.offset
         byte = @input[at]
-        @pos = @pos + 1
+        @scan.advance(1)
         case byte
         when 0_u8
           emit_null
@@ -701,16 +701,16 @@ pub struct Tokenizer
     when State::RawData
       raw_data_step
     when State::Plaintext
-      while @pos < @size
+      while !@scan.eos?
         text_run(0_u8, 0_u8, 0_u8)
-        break if @pos >= @size
-        @pos = @pos + 1
+        break if @scan.eos?
+        @scan.advance(1)
         emit_char(REPLACEMENT)
       end
     when State::TagOpen
-      at = @pos
+      at = @scan.offset
       byte = @input[at]
-      @pos = @pos + 1
+      @scan.advance(1)
       case byte
       when 0x21_u8
         @state = State::MarkupDeclarationOpen
@@ -733,9 +733,9 @@ pub struct Tokenizer
         end
       end
     when State::EndTagOpen
-      at = @pos
+      at = @scan.offset
       byte = @input[at]
-      @pos = @pos + 1
+      @scan.advance(1)
       if byte == 0x3e_u8
         @state = State::Data
       elsif ascii_letter?(byte)
@@ -746,10 +746,10 @@ pub struct Tokenizer
         reconsume(State::BogusComment)
       end
     when State::TagName
-      while @pos < @size
-        at = @pos
+      while !@scan.eos?
+        at = @scan.offset
         byte = @input[at]
-        @pos = @pos + 1
+        @scan.advance(1)
         if space?(byte)
           @state = State::BeforeAttributeName
           return
@@ -769,9 +769,9 @@ pub struct Tokenizer
     when State::RawLessThanSign
       raw_less_than_sign_step
     when State::RawEndTagOpen
-      at = @pos
+      at = @scan.offset
       byte = @input[at]
-      @pos = @pos + 1
+      @scan.advance(1)
       if ascii_letter?(byte)
         create_tag(TokenKind::EndTag, at)
         @temp.push_input(at)
@@ -781,9 +781,9 @@ pub struct Tokenizer
         reconsume(State::RawData)
       end
     when State::RawEndTagName
-      at = @pos
+      at = @scan.offset
       byte = @input[at]
-      @pos = @pos + 1
+      @scan.advance(1)
       if have_appropriate_end_tag
         if space?(byte)
           @temp.clear
@@ -811,9 +811,9 @@ pub struct Tokenizer
         reconsume(State::RawData)
       end
     when State::ScriptDataEscapeStart
-      at = @pos
+      at = @scan.offset
       byte = @input[at]
-      @pos = @pos + 1
+      @scan.advance(1)
       if @raw == RawKind::DoubleEscaped
         if space?(byte) || byte == 0x2f_u8 || byte == 0x3e_u8
           escaped = @temp == "script" ? RawKind::DoubleEscaped : RawKind::Escaped
@@ -837,9 +837,9 @@ pub struct Tokenizer
         end
       end
     when State::ScriptDataEscapeStartDash
-      at = @pos
+      at = @scan.offset
       byte = @input[at]
-      @pos = @pos + 1
+      @scan.advance(1)
       if byte == 0x2d_u8
         emit_input(at)
         @raw = RawKind::Escaped
@@ -849,9 +849,9 @@ pub struct Tokenizer
         reconsume(State::RawData)
       end
     when State::ScriptDataEscapedDash, State::ScriptDataEscapedDashDash
-      at = @pos
+      at = @scan.offset
       byte = @input[at]
-      @pos = @pos + 1
+      @scan.advance(1)
       dash_dash = @state == State::ScriptDataEscapedDashDash
       if byte == 0x2d_u8
         emit_input(at)
@@ -871,9 +871,9 @@ pub struct Tokenizer
         @state = State::RawData
       end
     when State::ScriptDataDoubleEscapeEnd
-      at = @pos
+      at = @scan.offset
       byte = @input[at]
-      @pos = @pos + 1
+      @scan.advance(1)
       if space?(byte) || byte == 0x2f_u8 || byte == 0x3e_u8
         escaped = @temp == "script" ? RawKind::Escaped : RawKind::DoubleEscaped
         emit_input(at)
@@ -887,10 +887,10 @@ pub struct Tokenizer
         reconsume(State::RawData)
       end
     when State::BeforeAttributeName
-      while @pos < @size
-        at = @pos
+      while !@scan.eos?
+        at = @scan.offset
         byte = @input[at]
-        @pos = @pos + 1
+        @scan.advance(1)
         next if space?(byte)
         if byte == 0x2f_u8
           @state = State::SelfClosingStartTag
@@ -909,10 +909,10 @@ pub struct Tokenizer
         return
       end
     when State::AttributeName
-      while @pos < @size
-        at = @pos
+      while !@scan.eos?
+        at = @scan.offset
         byte = @input[at]
-        @pos = @pos + 1
+        @scan.advance(1)
         if space?(byte)
           @state = State::AfterAttributeName
           return
@@ -933,10 +933,10 @@ pub struct Tokenizer
         end
       end
     when State::AfterAttributeName
-      while @pos < @size
-        at = @pos
+      while !@scan.eos?
+        at = @scan.offset
         byte = @input[at]
-        @pos = @pos + 1
+        @scan.advance(1)
         next if space?(byte)
         if byte == 0x2f_u8
           @state = State::SelfClosingStartTag
@@ -957,20 +957,20 @@ pub struct Tokenizer
         return
       end
     when State::BeforeAttributeValue
-      while @pos < @size
-        byte = @input[@pos]
+      while !@scan.eos?
+        byte = @input[@scan.offset]
         if space?(byte)
-          @pos = @pos + 1
+          @scan.advance(1)
           next
         end
         if byte == 0x22_u8
-          @pos = @pos + 1
+          @scan.advance(1)
           @state = State::AttributeValueDoubleQuoted
         elsif byte == 0x27_u8
-          @pos = @pos + 1
+          @scan.advance(1)
           @state = State::AttributeValueSingleQuoted
         elsif byte == 0x3e_u8
-          @pos = @pos + 1
+          @scan.advance(1)
           @state = State::Data
           emit_current_tag
         else
@@ -980,11 +980,11 @@ pub struct Tokenizer
       end
     when State::AttributeValueDoubleQuoted, State::AttributeValueSingleQuoted
       quote = @state == State::AttributeValueDoubleQuoted ? 0x22_u8 : 0x27_u8
-      while @pos < @size
+      while !@scan.eos?
         value_run(quote, 0x26_u8)
-        break if @pos >= @size
-        byte = @input[@pos]
-        @pos = @pos + 1
+        break if @scan.eos?
+        byte = @input[@scan.offset]
+        @scan.advance(1)
         if byte == quote
           @state = State::AfterAttributeValueQuoted
           return
@@ -995,10 +995,10 @@ pub struct Tokenizer
         end
       end
     when State::AttributeValueUnquoted
-      while @pos < @size
-        at = @pos
+      while !@scan.eos?
+        at = @scan.offset
         byte = @input[at]
-        @pos = @pos + 1
+        @scan.advance(1)
         if space?(byte)
           @state = State::BeforeAttributeName
           return
@@ -1015,8 +1015,8 @@ pub struct Tokenizer
         end
       end
     when State::AfterAttributeValueQuoted
-      byte = @input[@pos]
-      @pos = @pos + 1
+      byte = @input[@scan.offset]
+      @scan.advance(1)
       if space?(byte)
         @state = State::BeforeAttributeName
       elsif byte == 0x2f_u8
@@ -1028,8 +1028,8 @@ pub struct Tokenizer
         reconsume(State::BeforeAttributeName)
       end
     when State::SelfClosingStartTag
-      byte = @input[@pos]
-      @pos = @pos + 1
+      byte = @input[@scan.offset]
+      @scan.advance(1)
       if byte == 0x3e_u8
         @self_closing = true
         @state = State::Data
@@ -1045,11 +1045,11 @@ pub struct Tokenizer
   private def raw_data_step : Nil
     case @raw
     when RawKind::Rcdata
-      while @pos < @size && @state == State::RawData
+      while !@scan.eos? && @state == State::RawData
         text_run(0x3c_u8, 0x26_u8, 0_u8)
-        break if @pos >= @size
-        byte = @input[@pos]
-        @pos = @pos + 1
+        break if @scan.eos?
+        byte = @input[@scan.offset]
+        @scan.advance(1)
         if byte == 0_u8
           emit_char(REPLACEMENT)
         elsif byte == 0x26_u8
@@ -1059,11 +1059,11 @@ pub struct Tokenizer
         end
       end
     when RawKind::Rawtext, RawKind::ScriptData
-      while @pos < @size
+      while !@scan.eos?
         text_run(0x3c_u8, 0_u8, 0_u8)
-        break if @pos >= @size
-        byte = @input[@pos]
-        @pos = @pos + 1
+        break if @scan.eos?
+        byte = @input[@scan.offset]
+        @scan.advance(1)
         if byte == 0_u8
           emit_char(REPLACEMENT)
         else
@@ -1072,12 +1072,12 @@ pub struct Tokenizer
         end
       end
     else
-      while @pos < @size
+      while !@scan.eos?
         text_run(0x3c_u8, 0x2d_u8, 0_u8)
-        break if @pos >= @size
-        at = @pos
+        break if @scan.eos?
+        at = @scan.offset
         byte = @input[at]
-        @pos = @pos + 1
+        @scan.advance(1)
         if byte == 0_u8
           emit_char(REPLACEMENT)
         elsif byte == 0x2d_u8
@@ -1094,9 +1094,9 @@ pub struct Tokenizer
   end
 
   private def raw_less_than_sign_step : Nil
-    at = @pos
+    at = @scan.offset
     byte = @input[at]
-    @pos = @pos + 1
+    @scan.advance(1)
     case @raw
     when RawKind::Escaped
       if byte == 0x2f_u8
@@ -1138,9 +1138,9 @@ pub struct Tokenizer
   private def comment_or_doctype_step : Nil
     case @state
     when State::CommentStart
-      at = @pos
+      at = @scan.offset
       byte = @input[at]
-      @pos = @pos + 1
+      @scan.advance(1)
       if byte == 0x2d_u8
         @state = State::CommentStartDash
       elsif byte == 0_u8
@@ -1154,9 +1154,9 @@ pub struct Tokenizer
         @state = State::Comment
       end
     when State::CommentStartDash
-      at = @pos
+      at = @scan.offset
       byte = @input[at]
-      @pos = @pos + 1
+      @scan.advance(1)
       if byte == 0x2d_u8
         @state = State::CommentEnd
       elsif byte == 0_u8
@@ -1171,10 +1171,10 @@ pub struct Tokenizer
         @state = State::Comment
       end
     when State::Comment
-      while @pos < @size
-        at = @pos
+      while !@scan.eos?
+        at = @scan.offset
         byte = @input[at]
-        @pos = @pos + 1
+        @scan.advance(1)
         if byte == 0x3c_u8
           @comment.push_input(at)
           @state = State::CommentLessThanSign
@@ -1189,9 +1189,9 @@ pub struct Tokenizer
         end
       end
     when State::CommentLessThanSign
-      at = @pos
+      at = @scan.offset
       byte = @input[at]
-      @pos = @pos + 1
+      @scan.advance(1)
       if byte == 0x21_u8
         @comment.push_input(at)
         @state = State::CommentLessThanSignBang
@@ -1201,28 +1201,28 @@ pub struct Tokenizer
         reconsume(State::Comment)
       end
     when State::CommentLessThanSignBang
-      byte = @input[@pos]
-      @pos = @pos + 1
+      byte = @input[@scan.offset]
+      @scan.advance(1)
       if byte == 0x2d_u8
         @state = State::CommentLessThanSignBangDash
       else
         reconsume(State::Comment)
       end
     when State::CommentLessThanSignBangDash
-      byte = @input[@pos]
-      @pos = @pos + 1
+      byte = @input[@scan.offset]
+      @scan.advance(1)
       if byte == 0x2d_u8
         @state = State::CommentLessThanSignBangDashDash
       else
         reconsume(State::CommentEndDash)
       end
     when State::CommentLessThanSignBangDashDash
-      @pos = @pos + 1
+      @scan.advance(1)
       reconsume(State::CommentEnd)
     when State::CommentEndDash
-      at = @pos
+      at = @scan.offset
       byte = @input[at]
-      @pos = @pos + 1
+      @scan.advance(1)
       if byte == 0x2d_u8
         @state = State::CommentEnd
       elsif byte == 0_u8
@@ -1235,9 +1235,9 @@ pub struct Tokenizer
         @state = State::Comment
       end
     when State::CommentEnd
-      at = @pos
+      at = @scan.offset
       byte = @input[at]
-      @pos = @pos + 1
+      @scan.advance(1)
       if byte == 0x3e_u8
         @state = State::Data
         emit_comment
@@ -1250,9 +1250,9 @@ pub struct Tokenizer
         reconsume(State::Comment)
       end
     when State::CommentEndBang
-      at = @pos
+      at = @scan.offset
       byte = @input[at]
-      @pos = @pos + 1
+      @scan.advance(1)
       if byte == 0x2d_u8
         @comment.push_text("--!")
         @state = State::CommentEndDash
@@ -1269,18 +1269,18 @@ pub struct Tokenizer
         @state = State::Comment
       end
     when State::Doctype
-      byte = @input[@pos]
-      @pos = @pos + 1
+      byte = @input[@scan.offset]
+      @scan.advance(1)
       if space?(byte)
         @state = State::BeforeDoctypeName
       else
         reconsume(State::BeforeDoctypeName)
       end
     when State::BeforeDoctypeName
-      while @pos < @size
-        at = @pos
+      while !@scan.eos?
+        at = @scan.offset
         byte = @input[at]
-        @pos = @pos + 1
+        @scan.advance(1)
         next if space?(byte)
         create_doctype
         if byte == 0_u8
@@ -1299,10 +1299,10 @@ pub struct Tokenizer
         return
       end
     when State::DoctypeName
-      while @pos < @size
-        at = @pos
+      while !@scan.eos?
+        at = @scan.offset
         byte = @input[at]
-        @pos = @pos + 1
+        @scan.advance(1)
         if space?(byte)
           @temp.clear
           @state = State::AfterDoctypeName
@@ -1325,8 +1325,8 @@ pub struct Tokenizer
         @doctype_id_system = true
         @state = State::AfterDoctypeKeyword
       else
-        byte = @input[@pos]
-        @pos = @pos + 1
+        byte = @input[@scan.offset]
+        @scan.advance(1)
         if space?(byte)
         elsif byte == 0x3e_u8
           @state = State::Data
@@ -1337,8 +1337,8 @@ pub struct Tokenizer
         end
       end
     when State::AfterDoctypeKeyword, State::BeforeDoctypeIdentifier
-      byte = @input[@pos]
-      @pos = @pos + 1
+      byte = @input[@scan.offset]
+      @scan.advance(1)
       if space?(byte)
         @state = State::BeforeDoctypeIdentifier if @state == State::AfterDoctypeKeyword
       elsif byte == 0x22_u8
@@ -1357,10 +1357,10 @@ pub struct Tokenizer
       end
     when State::DoctypeIdentifierDoubleQuoted, State::DoctypeIdentifierSingleQuoted
       quote = @state == State::DoctypeIdentifierDoubleQuoted ? 0x22_u8 : 0x27_u8
-      while @pos < @size
-        at = @pos
+      while !@scan.eos?
+        at = @scan.offset
         byte = @input[at]
-        @pos = @pos + 1
+        @scan.advance(1)
         if byte == quote
           @state = State::AfterDoctypeIdentifier
           return
@@ -1376,8 +1376,8 @@ pub struct Tokenizer
         end
       end
     when State::AfterDoctypeIdentifier
-      byte = @input[@pos]
-      @pos = @pos + 1
+      byte = @input[@scan.offset]
+      @scan.advance(1)
       if @doctype_id_system
         if space?(byte)
         elsif byte == 0x3e_u8
@@ -1402,8 +1402,8 @@ pub struct Tokenizer
         end
       end
     when State::BetweenDoctypePublicAndSystemIdentifiers
-      byte = @input[@pos]
-      @pos = @pos + 1
+      byte = @input[@scan.offset]
+      @scan.advance(1)
       if space?(byte)
       elsif byte == 0x3e_u8
         @state = State::Data
@@ -1417,9 +1417,9 @@ pub struct Tokenizer
         reconsume(State::BogusDoctype)
       end
     when State::BogusDoctype
-      while @pos < @size
-        byte = @input[@pos]
-        @pos = @pos + 1
+      while !@scan.eos?
+        byte = @input[@scan.offset]
+        @scan.advance(1)
         if byte == 0x3e_u8
           @state = State::Data
           emit_doctype
@@ -1427,10 +1427,10 @@ pub struct Tokenizer
         end
       end
     when State::BogusComment
-      while @pos < @size
-        at = @pos
+      while !@scan.eos?
+        at = @scan.offset
         byte = @input[at]
-        @pos = @pos + 1
+        @scan.advance(1)
         if byte == 0x3e_u8
           @state = State::Data
           emit_comment
@@ -1455,10 +1455,10 @@ pub struct Tokenizer
         @state = State::BogusComment
       end
     when State::CdataSection
-      while @pos < @size
-        at = @pos
+      while !@scan.eos?
+        at = @scan.offset
         byte = @input[at]
-        @pos = @pos + 1
+        @scan.advance(1)
         if byte == 0x5d_u8
           @state = State::CdataSectionBracket
           return
@@ -1471,8 +1471,8 @@ pub struct Tokenizer
         end
       end
     when State::CdataSectionBracket
-      byte = @input[@pos]
-      @pos = @pos + 1
+      byte = @input[@scan.offset]
+      @scan.advance(1)
       if byte == 0x5d_u8
         @state = State::CdataSectionEnd
       else
@@ -1480,8 +1480,8 @@ pub struct Tokenizer
         reconsume(State::CdataSection)
       end
     when State::CdataSectionEnd
-      byte = @input[@pos]
-      @pos = @pos + 1
+      byte = @input[@scan.offset]
+      @scan.advance(1)
       if byte == 0x5d_u8
         @temp.push_byte(0x5d_u8)
       elsif byte == 0x3e_u8
@@ -1596,16 +1596,16 @@ pub struct Tokenizer
   # text, or the attribute value *in_attribute*; when it stands for
   # nothing, the `&` does, and what followed it is read again.
   private def char_ref(in_attribute : Bool) : Nil
-    amp = @pos - 1
-    if @pos >= @size
+    amp = @scan.offset - 1
+    if @scan.eos?
       char_ref_none(amp, in_attribute)
       return
     end
-    byte = @input[@pos]
+    byte = @input[@scan.offset]
     if ascii_alphanumeric?(byte)
       named_char_ref(amp, in_attribute)
     elsif byte == 0x23_u8
-      @pos = @pos + 1
+      @scan.advance(1)
       numeric_char_ref(amp, in_attribute)
     else
       char_ref_none(amp, in_attribute)
@@ -1631,30 +1631,30 @@ pub struct Tokenizer
   end
 
   private def numeric_char_ref(amp : Int32, in_attribute : Bool) : Nil
-    hash = @pos - 1
+    hash = @scan.offset - 1
     base = 10_u32
-    if @pos < @size && (@input[@pos] == 0x78_u8 || @input[@pos] == 0x58_u8)
-      @pos = @pos + 1
+    if !@scan.eos? && (@input[@scan.offset] == 0x78_u8 || @input[@scan.offset] == 0x58_u8)
+      @scan.advance(1)
       base = 16_u32
     end
     num = 0_u32
     too_big = false
     seen_digit = false
-    while @pos < @size
-      digit = digit_value(@input[@pos], base)
+    while !@scan.eos?
+      digit = digit_value(@input[@scan.offset], base)
       break if digit < 0
-      @pos = @pos + 1
+      @scan.advance(1)
       num = num &* base
       too_big = true if num > 0x10ffff_u32
       num = num &+ digit.to_u32
       seen_digit = true
     end
     unless seen_digit
-      @pos = hash
+      @scan.offset = hash
       char_ref_none(amp, in_attribute)
       return
     end
-    @pos = @pos + 1 if @pos < @size && @input[@pos] == 0x3b_u8
+    @scan.advance(1) if !@scan.eos? && @input[@scan.offset] == 0x3b_u8
     char_ref_chars(numeric_value(num, too_big), 0_u32, in_attribute)
   end
 
@@ -1686,7 +1686,7 @@ pub struct Tokenizer
   # remembering the longest that is one; what it read past that is read
   # again.
   private def named_char_ref(amp : Int32, in_attribute : Bool) : Nil
-    start = @pos
+    start = @scan.offset
     matched = 0_i64
     matched_size = 0
     read = 0
@@ -1700,7 +1700,7 @@ pub struct Tokenizer
       end
     end
     if matched_size == 0
-      @pos = start
+      @scan.offset = start
       char_ref_none(amp, in_attribute)
       return
     end
@@ -1708,12 +1708,12 @@ pub struct Tokenizer
     if last != 0x3b_u8 && in_attribute && matched_size < read
       after = @input[start + matched_size]
       if after == 0x3d_u8 || ascii_alphanumeric?(after)
-        @pos = start
+        @scan.offset = start
         char_ref_none(amp, in_attribute)
         return
       end
     end
-    @pos = start + matched_size
+    @scan.offset = start + matched_size
     char_ref_chars((matched >> 32).to_u32, (matched & 0xffffffff_i64).to_u32, in_attribute)
   end
 end

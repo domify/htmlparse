@@ -9,7 +9,7 @@ import std/file::{File}
 import std/json::{JSON, Any}
 import htmlparse/tokenizer::{Tokenizer, Token, TokenKind, State, RawKind, normalize_newlines}
 
-def json_string(text : Tape::String, w : Tape::String::Writer) : Nil
+def json_string(text : Str, w : Str::Builder) : Nil
   w << '"'
   text.each_byte do |byte|
     case byte
@@ -28,7 +28,7 @@ def json_string(text : Tape::String, w : Tape::String::Writer) : Nil
   w << '"'
 end
 
-def json_value(text : Tape::String, present : Bool, w : Tape::String::Writer) : Nil
+def json_value(text : Str, present : Bool, w : Str::Builder) : Nil
   if present
     json_string(text, w)
   else
@@ -50,10 +50,10 @@ def tokens_json(input : String, state : String, last_start_tag : String?) : Stri
     when "CDATA section state" then tokenizer.start_in(State::CdataSection, RawKind::Rcdata)
     end
     if last = last_start_tag
-      tokenizer.last_start_tag = Tape::String.new(last)
+      tokenizer.last_start_tag = Str.new(last)
     end
-    w = Tape::String::Writer.new(256)
-    text = Tape::String::Writer.new(64)
+    w = Str::Builder.new(256)
+    text = Str::Builder.new(64)
     count = 0
     w << '['
     while true
@@ -72,7 +72,7 @@ def tokens_json(input : String, state : String, last_start_tag : String?) : Stri
         json_string(text.finish, w)
         w << ']'
         count = count + 1
-        text = Tape::String::Writer.new(64)
+        text = Str::Builder.new(64)
       end
       break if token.kind == TokenKind::EOF
       w << ',' if count > 0

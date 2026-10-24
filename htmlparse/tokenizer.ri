@@ -96,12 +96,12 @@ end
 # and *namespace* on a foreign element's (`xlink:href`).
 @[OnTape]
 pub struct Attr
-  getter name : Tape::String
-  getter value : Tape::String
-  getter prefix : Tape::String
+  getter name : Str
+  getter value : Str
+  getter prefix : Str
   getter namespace : UInt8
 
-  def initialize(@name : Tape::String, @value : Tape::String, @prefix : Tape::String, @namespace : UInt8)
+  def initialize(@name : Str, @value : Str, @prefix : Str, @namespace : UInt8)
   end
 end
 
@@ -113,22 +113,22 @@ end
 pub struct Token
   getter kind : TokenKind
   # The tag's or the doctype's name.
-  getter name : Tape::String
+  getter name : Str
   # The text's or the comment's.
-  getter text : Tape::String
+  getter text : Str
   getter attrs_start : Int32
   getter attrs_count : Int32
   getter self_closing : Bool
-  getter public_id : Tape::String
-  getter system_id : Tape::String
+  getter public_id : Str
+  getter system_id : Str
   getter has_name : Bool
   getter has_public_id : Bool
   getter has_system_id : Bool
   getter force_quirks : Bool
 
-  def initialize(@kind : TokenKind, @name : Tape::String, @text : Tape::String, @attrs_start : Int32,
-                 @attrs_count : Int32, @self_closing : Bool, @public_id : Tape::String,
-                 @system_id : Tape::String, @has_name : Bool, @has_public_id : Bool,
+  def initialize(@kind : TokenKind, @name : Str, @text : Str, @attrs_start : Int32,
+                 @attrs_count : Int32, @self_closing : Bool, @public_id : Str,
+                 @system_id : Str, @has_name : Bool, @has_public_id : Bool,
                  @has_system_id : Bool, @force_quirks : Bool)
   end
 end
@@ -138,17 +138,17 @@ end
 # that is not.
 @[OnTape]
 struct Bytes
-  @input : Tape::String
+  @input : Str
   @start : Int32
   @size : Int32
   @owned : Bool
-  @writer : Tape::String::Writer
+  @writer : Str::Builder
 
-  def initialize(@input : Tape::String)
+  def initialize(@input : Str)
     @start = 0
     @size = 0
     @owned = false
-    @writer = Tape::String::Writer.new(0)
+    @writer = Str::Builder.new(0)
   end
 
   def clear : Nil
@@ -234,13 +234,13 @@ struct Bytes
     @size
   end
 
-  def push_tape(text : Tape::String) : Nil
+  def push_tape(text : Str) : Nil
     return if text.empty?
     own
     @writer.append(text)
   end
 
-  def value : Tape::String
+  def value : Str
     return @writer.finish if @owned
     @input[@start, @size]
   end
@@ -254,7 +254,7 @@ struct Bytes
   # handed out stays as it was.
   private def own : Nil
     return if @owned
-    @writer = Tape::String::Writer.new(@size + 16)
+    @writer = Str::Builder.new(@size + 16)
     @writer.append(@input[@start, @size]) if @size > 0
     @owned = true
   end
@@ -262,9 +262,9 @@ end
 
 # *input* with every "\r\n" and "\r" a "\n", as the input stream
 # preprocessing asks: *input* itself when it has no carriage return.
-pub def normalize_newlines(input : Tape::String) : Tape::String
+pub def normalize_newlines(input : Str) : Str
   return input unless input.includes?('\r')
-  writer = Tape::String::Writer.new(input.bytesize)
+  writer = Str::Builder.new(input.bytesize)
   i = 0
   size = input.bytesize
   while i < size
@@ -309,9 +309,9 @@ REPLACEMENT = 0xfffd_u32
 
 @[OnTape]
 pub struct Tokenizer
-  getter input : Tape::String
+  getter input : Str
   # Every tag's attributes, each tag's after the last's.
-  getter attrs : Tape::Array(Attr)
+  getter attrs : Ary(Attr)
   getter state : State
   # Set when a tag starts an attribute past `max_attributes` (Gumbo's
   # limit; html5ever's `too_many_attributes`, not upstream's).
@@ -327,7 +327,7 @@ pub struct Tokenizer
   # 0 for no limit.
   property max_attributes : Int32
 
-  @scan : Tape::Scanner
+  @scan : Str::Scanner
   @size : Int32
   @raw : RawKind
   @doctype_id_system : Bool
@@ -349,11 +349,11 @@ pub struct Tokenizer
   @has_public_id : Bool
   @has_system_id : Bool
   @force_quirks : Bool
-  @last_start_tag : Tape::String
+  @last_start_tag : Str
   @has_last_start_tag : Bool
-  @queued : Tape::Array(Token)
+  @queued : Ary(Token)
   @next : Int32
-  @empty : Tape::String
+  @empty : Str
 
   # A tokenizer for *input*, with room for the attributes of most pages
   # that size.
@@ -362,16 +362,16 @@ pub struct Tokenizer
   # `TreeBuilder`'s `Dom.new`: one that grows when it is not at the tape's
   # end moves to a mapping of its own, a megabyte at least, which a parse
   # of a short fragment would make and unmap every time.
-  def initialize(input : Tape::String)
-    initialize(input, Tape::Array(Attr).new(input.bytesize // 16 + 16))
+  def initialize(input : Str)
+    initialize(input, Ary(Attr).new(input.bytesize // 16 + 16))
   end
 
   # A tokenizer for *input*, adding tags' attributes to *attrs*: a tree
   # parsed into one that is there already shares its attributes.
-  def initialize(input : Tape::String, attrs : Tape::Array(Attr))
+  def initialize(input : Str, attrs : Ary(Attr))
     @input = input
     @size = input.bytesize
-    @scan = Tape::Scanner.new(input)
+    @scan = Str::Scanner.new(input)
     @state = State::Data
     @raw = RawKind::Rcdata
     @doctype_id_system = false
@@ -401,7 +401,7 @@ pub struct Tokenizer
     @empty = input[0, 0]
     @last_start_tag = @empty
     @has_last_start_tag = false
-    @queued = Tape::Array(Token).new
+    @queued = Ary(Token).new
     @next = 0
   end
 
@@ -412,7 +412,7 @@ pub struct Tokenizer
     @raw = raw
   end
 
-  def last_start_tag=(name : Tape::String) : Nil
+  def last_start_tag=(name : Str) : Nil
     @last_start_tag = name
     @has_last_start_tag = true
   end

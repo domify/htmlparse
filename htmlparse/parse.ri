@@ -72,7 +72,7 @@ pub struct Document
   end
 end
 
-private def tokenizer_for(input : Tape::String, options : Options) : Tokenizer
+private def tokenizer_for(input : Str, options : Options) : Tokenizer
   tokenizer = Tokenizer.new(normalize_newlines(input))
   tokenizer.discard_bom = options.discard_bom
   tokenizer.max_attributes = options.max_attributes
@@ -89,7 +89,7 @@ private def finish(builder : TreeBuilder, root : Int32) : Document
   Document.new(builder.dom, root, error)
 end
 
-pub def parse_document(input : Tape::String, options : Options) : Document
+pub def parse_document(input : Str, options : Options) : Document
   builder = TreeBuilder.new(tokenizer_for(input, options), options.scripting, options.template_contents,
     options.max_tree_depth)
   builder.run
@@ -99,7 +99,7 @@ end
 # *input* parsed as `parse_fragment` does, into *dom*: its nodes are the
 # children of `Document#root` there, an `html` element under a fragment
 # node of its own, to be moved where they belong.
-pub def parse_fragment_into(dom : Dom, input : Tape::String, context : Tape::String, namespace : Namespace,
+pub def parse_fragment_into(dom : Dom, input : Str, context : Str, namespace : Namespace,
                             options : Options) : Document
   tokenizer = Tokenizer.new(normalize_newlines(input), dom.attrs)
   tokenizer.discard_bom = options.discard_bom
@@ -114,7 +114,7 @@ end
 # *input* parsed in the context of an element named *context* in
 # *namespace* (`Document#fragment`'s `body`, `Node#fragment`'s own
 # element); its nodes are the children of `Document#root`.
-pub def parse_fragment(input : Tape::String, context : Tape::String, namespace : Namespace,
+pub def parse_fragment(input : Str, context : Str, namespace : Namespace,
                        options : Options) : Document
   builder = TreeBuilder.new(tokenizer_for(input, options), options.scripting, options.template_contents,
     options.max_tree_depth)

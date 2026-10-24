@@ -14,7 +14,7 @@ def walk(dom : Dom, node : Int32, depth : Int32) : Nil
   case dom.kind(node)
   when NodeKind::Element
     tape do
-      w = Tape::String::Writer.new(64)
+      w = Str::Builder.new(64)
       w << indent << "<" << dom.name(node)
       i = 0
       while i < dom.attrs_count(node)
@@ -53,7 +53,7 @@ tape do
   end
 
   # Back to HTML: what `htmlparse(body)` answers.
-  w = Tape::String::Writer.new(body.bytesize)
+  w = Str::Builder.new(body.bytesize)
   serialize_children(doc.dom, doc.root, w, SerializeOptions.new)
   puts w
 end

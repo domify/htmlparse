@@ -80,14 +80,14 @@ NO_NODE = -1
 struct Tok
   property kind : TokenKind
   property split : Split
-  property text : Tape::String
-  property name : Tape::String
+  property text : Str
+  property name : Str
   property tag : Tag
   property attrs_start : Int32
   property attrs_count : Int32
   property self_closing : Bool
 
-  def initialize(@kind : TokenKind, @split : Split, @text : Tape::String, @name : Tape::String,
+  def initialize(@kind : TokenKind, @split : Split, @text : Str, @name : Str,
                  @tag : Tag, @attrs_start : Int32, @attrs_count : Int32, @self_closing : Bool)
   end
 
@@ -117,12 +117,12 @@ end
 @[OnTape]
 struct FormatEntry
   property node : Int32
-  getter name : Tape::String
+  getter name : Str
   getter tag : Tag
   getter attrs_start : Int32
   getter attrs_count : Int32
 
-  def initialize(@node : Int32, @name : Tape::String, @tag : Tag, @attrs_start : Int32, @attrs_count : Int32)
+  def initialize(@node : Int32, @name : Str, @tag : Tag, @attrs_start : Int32, @attrs_count : Int32)
   end
 
   def marker? : Bool
@@ -133,9 +133,9 @@ end
 @[OnTape]
 struct PendingText
   getter split : Split
-  getter text : Tape::String
+  getter text : Str
 
-  def initialize(@split : Split, @text : Tape::String)
+  def initialize(@split : Split, @text : Str)
   end
 end
 
@@ -158,12 +158,12 @@ private def ascii_whitespace?(byte : UInt8) : Bool
   byte == 0x20_u8 || byte == 0x0a_u8 || byte == 0x09_u8 || byte == 0x0c_u8 || byte == 0x0d_u8
 end
 
-private def any_not_whitespace(text : Tape::String) : Bool
+private def any_not_whitespace(text : Str) : Bool
   text.each_byte { |byte| return true unless ascii_whitespace?(byte) }
   false
 end
 
-private def eq_ignore_ascii_case(a : Tape::String, b : Tape::String) : Bool
+private def eq_ignore_ascii_case(a : Str, b : Str) : Bool
   return false unless a.bytesize == b.bytesize
   i = 0
   while i < a.bytesize
@@ -192,17 +192,17 @@ pub struct TreeBuilder
   @max_open_elements : Int32
   @mode : InsertionMode
   @orig_mode : InsertionMode
-  @template_modes : Tape::Array(InsertionMode)
-  @pending_table_text : Tape::Array(PendingText)
-  @open : Tape::Array(Int32)
-  @formatting : Tape::Array(FormatEntry)
+  @template_modes : Ary(InsertionMode)
+  @pending_table_text : Ary(PendingText)
+  @open : Ary(Int32)
+  @formatting : Ary(FormatEntry)
   @head_elem : Int32
   @form_elem : Int32
   @context_elem : Int32
   @frameset_ok : Bool
   @ignore_lf : Bool
   @foster_parenting : Bool
-  @empty : Tape::String
+  @empty : Str
   # The node this parse's tree hangs from.
   getter document : Int32
   # What a step hands back with `Reprocess` and `SplitWhitespace`.
@@ -231,10 +231,10 @@ pub struct TreeBuilder
     @quirks_mode = QuirksMode::NoQuirks
     @mode = InsertionMode::Initial
     @orig_mode = InsertionMode::Initial
-    @template_modes = Tape::Array(InsertionMode).new
-    @pending_table_text = Tape::Array(PendingText).new
-    @open = Tape::Array(Int32).new(16)
-    @formatting = Tape::Array(FormatEntry).new
+    @template_modes = Ary(InsertionMode).new
+    @pending_table_text = Ary(PendingText).new
+    @open = Ary(Int32).new(16)
+    @formatting = Ary(FormatEntry).new
     @head_elem = NO_NODE
     @form_elem = NO_NODE
     @context_elem = NO_NODE
@@ -249,7 +249,7 @@ pub struct TreeBuilder
   # *namespace* (`new_for_fragment`), and the tokenizer's state for it.
   # *context_allows_scripting* is html5ever's
   # `context_element_allows_scripting`.
-  def fragment(namespace : Namespace, name : Tape::String, context_allows_scripting : Bool) : Nil
+  def fragment(namespace : Namespace, name : Str, context_allows_scripting : Bool) : Nil
     @context_elem = create_element(namespace, name, tag_of(name), @tokenizer.attrs.size, 0)
     @template_modes << InsertionMode::InTemplate if @dom.html?(@context_elem, Tag::Template)
     create_root(@tokenizer.attrs.size, 0)
@@ -419,8 +419,8 @@ pub struct TreeBuilder
     QuirksMode::NoQuirks
   end
 
-  private def lowercase(text : Tape::String) : Tape::String
-    writer = Tape::String::Writer.new(text.bytesize)
+  private def lowercase(text : Str) : Str
+    writer = Str::Builder.new(text.bytesize)
     text.each_byte { |byte| writer.push(byte >= 0x41_u8 && byte <= 0x5a_u8 ? byte + 0x20_u8 : byte) }
     writer.finish
   end
@@ -492,7 +492,7 @@ pub struct TreeBuilder
 
   # Whether *node* is the HTML element named *name*, as *tag*: by name
   # where it is not one the parser knows.
-  private def named?(node : Int32, tag : Tag, name : Tape::String) : Bool
+  private def named?(node : Int32, tag : Tag, name : Str) : Bool
     return @dom.html?(node, tag) unless tag == Tag::Other
     @dom.html?(node, Tag::Other) && @dom.name(node) == name
   end
@@ -565,7 +565,7 @@ pub struct TreeBuilder
 
   # Whether the HTML element *tag* (by *name* where it is `Other`) is in
   # *scope*.
-  private def in_scope_named(scope : Int32, tag : Tag, name : Tape::String) : Bool
+  private def in_scope_named(scope : Int32, tag : Tag, name : Str) : Bool
     i = @open.size - 1
     while i >= 0
       node = @open[i]
@@ -701,7 +701,7 @@ pub struct TreeBuilder
 
   # Pops up to and including the HTML element *tag* (by *name* where it is
   # `Other`); how many it popped.
-  private def pop_until_named(tag : Tag, name : Tape::String) : Int32
+  private def pop_until_named(tag : Tag, name : Str) : Int32
     n = 0
     while true
       n = n + 1
@@ -727,7 +727,7 @@ pub struct TreeBuilder
     n
   end
 
-  private def expect_to_close(tag : Tag, name : Tape::String) : Nil
+  private def expect_to_close(tag : Tag, name : Str) : Nil
     pop_until_named(tag, name)
   end
 
@@ -911,7 +911,7 @@ pub struct TreeBuilder
 
   # --- inserting ----------------------------------------------------------
 
-  private def create_element(namespace : Namespace, name : Tape::String, tag : Tag, start : Int32, count : Int32) : Int32
+  private def create_element(namespace : Namespace, name : Str, tag : Tag, start : Int32, count : Int32) : Int32
     node = @dom.create_element(namespace, name, tag, start, count)
     if @template_contents && namespace == Namespace::Html && tag == Tag::Template
       @dom.set_contents(node, @dom.create_fragment)
@@ -955,7 +955,7 @@ pub struct TreeBuilder
     end
   end
 
-  private def insert_text_at(point : InsertionPoint, text : Tape::String) : Nil
+  private def insert_text_at(point : InsertionPoint, text : Str) : Nil
     if !point.foster?
       @dom.append_text(point.parent, text)
     elsif @dom.parent(point.element) != NO_NODE
@@ -969,22 +969,22 @@ pub struct TreeBuilder
     insert_node_at(appropriate_place_for_insertion(override_target), node)
   end
 
-  private def append_text(text : Tape::String) : Outcome
+  private def append_text(text : Str) : Outcome
     insert_text_at(appropriate_place_for_insertion(NO_NODE), text)
     Outcome::Done
   end
 
-  private def append_comment(text : Tape::String) : Outcome
+  private def append_comment(text : Str) : Outcome
     insert_appropriately(@dom.create_comment(text), NO_NODE)
     Outcome::Done
   end
 
-  private def append_comment_to_doc(text : Tape::String) : Outcome
+  private def append_comment_to_doc(text : Str) : Outcome
     @dom.append(@document, @dom.create_comment(text))
     Outcome::Done
   end
 
-  private def append_comment_to_html(text : Tape::String) : Outcome
+  private def append_comment_to_html(text : Str) : Outcome
     @dom.append(html_elem, @dom.create_comment(text))
     Outcome::Done
   end
@@ -995,7 +995,7 @@ pub struct TreeBuilder
     @dom.append(@document, node)
   end
 
-  private def insert_element(push : Bool, namespace : Namespace, name : Tape::String, tag : Tag, start : Int32,
+  private def insert_element(push : Bool, namespace : Namespace, name : Str, tag : Tag, start : Int32,
                              count : Int32) : Int32
     node = create_element(namespace, name, tag, start, count)
     insert_node_at(appropriate_place_for_insertion(NO_NODE), node)
@@ -1183,7 +1183,7 @@ pub struct TreeBuilder
     end
   end
 
-  private def subject_name(subject : Tag) : Tape::String
+  private def subject_name(subject : Tag) : Str
     case subject
     when Tag::A      then "a".as_tape
     when Tag::B      then "b".as_tape

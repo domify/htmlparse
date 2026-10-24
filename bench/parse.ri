@@ -32,7 +32,7 @@ while i < n
     parsed = Time.monotonic
     parsing = parsing + (parsed - started).total_nanoseconds.to_i64
     if write
-      w = Tape::String::Writer.new(input.bytesize)
+      w = Str::Builder.new(input.bytesize)
       serialize_children(document.dom, document.root, w, SerializeOptions.new)
       text = w.finish
       writing = writing + (Time.monotonic - parsed).total_nanoseconds.to_i64

@@ -36,7 +36,7 @@ class Table
   end
 
   private def insert(key : String, value : Int64, replace : Bool) : Nil
-    slot = (hash(Tape::String.view(key)) & @mask).to_i32
+    slot = (hash(Str.view(key)) & @mask).to_i32
     while true
       if @values[slot] < 0
         @keys[slot] = key
@@ -51,13 +51,13 @@ class Table
     end
   end
 
-  def hash(key : Tape::String) : UInt32
+  def hash(key : Str) : UInt32
     h = 2166136261_u32
     key.each_byte { |b| h = (h ^ b.to_u32) &* 16777619_u32 }
     h
   end
 
-  def lookup(key : Tape::String) : Int64?
+  def lookup(key : Str) : Int64?
     slot = (hash(key) & @mask).to_i32
     while true
       value = @values[slot]
@@ -74,6 +74,6 @@ TABLE = Table.new(ENTITY_DATA)
 # The code points *name* (without its `&`) stands for, as
 # `first << 32 | second` with a second of 0 when there is one; `PREFIX`
 # when it begins a longer name only; nil when it begins none.
-pub def lookup(name : Tape::String) : Int64?
+pub def lookup(name : Str) : Int64?
   TABLE.lookup(name)
 end

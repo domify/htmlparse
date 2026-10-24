@@ -27,6 +27,6 @@ using it; this page is for changing it.
   by hand.
 - Follow html5ever's code closely; name the Rust function a ris one ports
   where it is not obvious.
-- Tape first: take `Tape::String`, write into the caller's writer, return
+- Tape first: take `Str`, write into the caller's writer, return
   views of the input. No heap copies in the parse.
 - Every line is at most 80 characters in documents and commit messages.

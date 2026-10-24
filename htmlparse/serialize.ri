@@ -22,7 +22,7 @@ end
 
 # *node* as HTML: an element with its tags, a document or fragment as
 # its children.
-pub def serialize(dom : Dom, node : Int32, writer : Tape::String::Writer, options : SerializeOptions) : Nil
+pub def serialize(dom : Dom, node : Int32, writer : Str::Builder, options : SerializeOptions) : Nil
   case dom.kind(node)
   when NodeKind::Document, NodeKind::Fragment
     serialize_children(dom, node, writer, options)
@@ -32,7 +32,7 @@ pub def serialize(dom : Dom, node : Int32, writer : Tape::String::Writer, option
 end
 
 # *node*'s children as HTML (`inner_html`).
-pub def serialize_children(dom : Dom, node : Int32, writer : Tape::String::Writer, options : SerializeOptions) : Nil
+pub def serialize_children(dom : Dom, node : Int32, writer : Str::Builder, options : SerializeOptions) : Nil
   child = dom.first_child(node)
   while child >= 0
     serialize_node(dom, child, writer, options)
@@ -40,7 +40,7 @@ pub def serialize_children(dom : Dom, node : Int32, writer : Tape::String::Write
   end
 end
 
-private def serialize_node(dom : Dom, node : Int32, writer : Tape::String::Writer, options : SerializeOptions) : Nil
+private def serialize_node(dom : Dom, node : Int32, writer : Str::Builder, options : SerializeOptions) : Nil
   case dom.kind(node)
   when NodeKind::Element
     writer << '<' << dom.name(node)
@@ -109,7 +109,7 @@ end
 # *text* escaped: `&` and U+00A0 always, `"` in an attribute value, `<`
 # and `>` in text, and in an attribute value when *brackets*. Runs that
 # need no escape are written as they are.
-private def escape(text : Tape::String, writer : Tape::String::Writer, attribute : Bool, brackets : Bool) : Nil
+private def escape(text : Str, writer : Str::Builder, attribute : Bool, brackets : Bool) : Nil
   start = 0
   i = 0
   size = text.bytesize

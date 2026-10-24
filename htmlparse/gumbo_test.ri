@@ -33,7 +33,7 @@ def roundtrip(html : String) : String
       input = input[3, input.bytesize - 3]
     end
     document = parse_fragment(input, "body".as_tape, Namespace::Html, Options.gumbo)
-    w = Tape::String::Writer.new(64)
+    w = Str::Builder.new(64)
     serialize_children(document.dom, document.root, w, SerializeOptions.new)
     result = w.finish.to_heap
   end

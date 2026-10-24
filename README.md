@@ -10,7 +10,7 @@ tokenizer cases.
 import htmlparse::{htmlparse}
 
 tape do
-  html = htmlparse(body) # a Tape::String: the HTML, parsed and written back
+  html = htmlparse(body) # a Str: the HTML, parsed and written back
   puts html
 end
 ```
@@ -32,7 +32,7 @@ A parse works on the caller's tape and opens none of its own. The tree,
 its names, text and attribute values are tape values: views of the input
 wherever they are its bytes unchanged, copied only where they differ (a
 name lowercased, a character reference read, a NUL replaced). The input
-must outlive the tree. Nodes are one `Tape::Array`, linked by index, so
+must outlive the tree. Nodes are one `Ary`, linked by index, so
 foster parenting and the adoption agency move a node in a few writes.
 Text added next to text is kept in pieces and joined once, when read.
 

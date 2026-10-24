@@ -11,7 +11,7 @@ import htmlparse/parse::{parse_document, parse_fragment, Options, Document}
 import htmlparse/dom::{Dom, NodeKind, Namespace}
 import htmlparse/serialize::{serialize_children, SerializeOptions}
 
-def dump(dom : Dom, node : Int32, depth : Int32, w : Tape::String::Writer) : Nil
+def dump(dom : Dom, node : Int32, depth : Int32, w : Str::Builder) : Nil
   indent = "  " * depth
   case dom.kind(node)
   when NodeKind::Doctype
@@ -83,14 +83,14 @@ def tree(input : String, fragment : String?, scripting : Bool) : Tuple(String, S
       document = parse_document(input.as_tape, options)
     end
     dom = document.dom
-    w = Tape::String::Writer.new(256)
+    w = Str::Builder.new(256)
     child = dom.first_child(document.root)
     while child >= 0
       dump(dom, child, 0, w)
       child = dom.next_sibling(child)
     end
     result = w.finish.to_heap
-    h = Tape::String::Writer.new(256)
+    h = Str::Builder.new(256)
     serialize_children(dom, document.root, h, SerializeOptions.new(raw_noscript: scripting))
     html = h.finish.to_heap
   end

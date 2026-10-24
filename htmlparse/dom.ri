@@ -43,11 +43,11 @@ pub struct Node
   # does not decide by.
   property tag : Tag
   # An element's local name, a doctype's name.
-  property name : Tape::String
+  property name : Str
   # A text's or comment's data, a doctype's public identifier.
-  property data : Tape::String
+  property data : Str
   # A doctype's system identifier.
-  property system_id : Tape::String
+  property system_id : Str
   property parent : Int32
   property first_child : Int32
   property last_child : Int32
@@ -63,8 +63,8 @@ pub struct Node
   property pieces_first : Int32
   property pieces_last : Int32
 
-  def initialize(@kind : NodeKind, @namespace : Namespace, @tag : Tag, @name : Tape::String,
-                 @data : Tape::String, @system_id : Tape::String)
+  def initialize(@kind : NodeKind, @namespace : Namespace, @tag : Tag, @name : Str,
+                 @data : Str, @system_id : Str)
     @parent = NO_NODE
     @first_child = NO_NODE
     @last_child = NO_NODE
@@ -80,27 +80,27 @@ end
 
 @[OnTape]
 struct Piece
-  getter text : Tape::String
+  getter text : Str
   property next : Int32
 
-  def initialize(@text : Tape::String)
+  def initialize(@text : Str)
     @next = NO_NODE
   end
 end
 
 @[OnTape]
 pub struct Dom
-  getter nodes : Tape::Array(Node)
-  getter attrs : Tape::Array(Attr)
-  @pieces : Tape::Array(Piece)
-  @empty : Tape::String
+  getter nodes : Ary(Node)
+  getter attrs : Ary(Attr)
+  @pieces : Ary(Piece)
+  @empty : Str
 
   # A document node, 0, with *attrs* holding the attributes to come and
   # room for *capacity* nodes.
-  def initialize(@attrs : Tape::Array(Attr), empty : Tape::String, capacity : Int32 = 64)
+  def initialize(@attrs : Ary(Attr), empty : Str, capacity : Int32 = 64)
     @empty = empty
-    @nodes = Tape::Array(Node).new(capacity)
-    @pieces = Tape::Array(Piece).new
+    @nodes = Ary(Node).new(capacity)
+    @pieces = Ary(Piece).new
     @nodes << Node.new(NodeKind::Document, Namespace::None, Tag::Other, empty, empty, empty)
   end
 
@@ -128,29 +128,29 @@ pub struct Dom
   end
 
   # An element with the `count` attributes from `start` in `attrs`.
-  def create_element(namespace : Namespace, name : Tape::String, start : Int32, count : Int32) : Int32
+  def create_element(namespace : Namespace, name : Str, start : Int32, count : Int32) : Int32
     node = Node.new(NodeKind::Element, namespace, tag_of(name), name, @empty, @empty)
     node.attrs_start = start
     node.attrs_count = count
     add(node)
   end
 
-  def create_element(namespace : Namespace, name : Tape::String, tag : Tag, start : Int32, count : Int32) : Int32
+  def create_element(namespace : Namespace, name : Str, tag : Tag, start : Int32, count : Int32) : Int32
     node = Node.new(NodeKind::Element, namespace, tag, name, @empty, @empty)
     node.attrs_start = start
     node.attrs_count = count
     add(node)
   end
 
-  def create_text(text : Tape::String) : Int32
+  def create_text(text : Str) : Int32
     add(Node.new(NodeKind::Text, Namespace::None, Tag::Other, @empty, text, @empty))
   end
 
-  def create_comment(text : Tape::String) : Int32
+  def create_comment(text : Str) : Int32
     add(Node.new(NodeKind::Comment, Namespace::None, Tag::Other, @empty, text, @empty))
   end
 
-  def create_doctype(name : Tape::String, public_id : Tape::String, system_id : Tape::String) : Int32
+  def create_doctype(name : Str, public_id : Str, system_id : Str) : Int32
     add(Node.new(NodeKind::Doctype, Namespace::None, Tag::Other, name, public_id, system_id))
   end
 
@@ -194,7 +194,7 @@ pub struct Dom
     @nodes[node].namespace
   end
 
-  def name(node : Int32) : Tape::String
+  def name(node : Int32) : Str
     @nodes[node].name
   end
 
@@ -229,7 +229,7 @@ pub struct Dom
   end
 
   # A text's or comment's data; a text's pieces joined first.
-  def data(node : Int32) : Tape::String
+  def data(node : Int32) : Str
     entry = @nodes[node]
     return entry.data if entry.pieces_first == NO_NODE
     size = entry.data.bytesize
@@ -238,7 +238,7 @@ pub struct Dom
       size = size + @pieces[piece].text.bytesize
       piece = @pieces[piece].next
     end
-    writer = Tape::String::Writer.new(size)
+    writer = Str::Builder.new(size)
     writer.append(entry.data)
     piece = entry.pieces_first
     while piece != NO_NODE
@@ -252,11 +252,11 @@ pub struct Dom
     entry.data
   end
 
-  def public_id(node : Int32) : Tape::String
+  def public_id(node : Int32) : Str
     @nodes[node].data
   end
 
-  def system_id(node : Int32) : Tape::String
+  def system_id(node : Int32) : Str
     @nodes[node].system_id
   end
 
@@ -337,7 +337,7 @@ pub struct Dom
   end
 
   # *text* as *parent*'s last child: joined to it when that is text.
-  def append_text(parent : Int32, text : Tape::String) : Nil
+  def append_text(parent : Int32, text : Str) : Nil
     last = @nodes[parent].last_child
     if last != NO_NODE && text?(last)
       join_text(last, text)
@@ -347,7 +347,7 @@ pub struct Dom
   end
 
   # *text* just before *sibling*: joined to the text before it, if any.
-  def insert_text_before(sibling : Int32, text : Tape::String) : Nil
+  def insert_text_before(sibling : Int32, text : Str) : Nil
     before = @nodes[sibling].previous
     if before != NO_NODE && text?(before)
       join_text(before, text)
@@ -356,7 +356,7 @@ pub struct Dom
     end
   end
 
-  private def join_text(node : Int32, text : Tape::String) : Nil
+  private def join_text(node : Int32, text : Str) : Nil
     return if text.empty?
     entry = @nodes[node]
     if entry.data.empty? && entry.pieces_first == NO_NODE
@@ -433,7 +433,7 @@ pub struct Dom
 
   # The text of *node*'s text descendants in document order, or its own
   # data for a text or comment (libxml2's `xmlNodeGetContent`).
-  def text_content(node : Int32, writer : Tape::String::Writer) : Nil
+  def text_content(node : Int32, writer : Str::Builder) : Nil
     kind = @nodes[node].kind
     if kind == NodeKind::Text || kind == NodeKind::Comment
       writer << data(node)
@@ -453,7 +453,7 @@ pub struct Dom
   # A copy of the whole tree, nodes at the same indexes, that changes to
   # either leave the other as it is.
   def duplicate : Dom
-    copy = Dom.new(Tape::Array(Attr).new(@attrs.size + 4), @empty, @nodes.size)
+    copy = Dom.new(Ary(Attr).new(@attrs.size + 4), @empty, @nodes.size)
     copy.copy_from(self)
     copy
   end
@@ -465,7 +465,7 @@ pub struct Dom
     other.pieces.each { |piece| @pieces << piece }
   end
 
-  protected def pieces : Tape::Array(Piece)
+  protected def pieces : Ary(Piece)
     @pieces
   end
 

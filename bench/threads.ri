@@ -11,21 +11,21 @@ import std/file::{File}
 import std/time::{Time}
 import htmlparse::{htmlparse}
 
-# The threads' running checksum, a word in a mapping of its own that
-# they all add to.
+# The threads' running checksum, which they all add to.
 class Total
-  @@page : UInt64 = 0_u64
+  @sum = Atomic(UInt64).new(0_u64)
 
-  def self.setup : Nil
-    @@page = __iyi_mmap(4096_u64).address
+  def add(value : UInt64) : Nil
+    @sum.add(value)
   end
 
-  def self.sum : Pointer(Atomic(UInt64))
-    Pointer(Atomic(UInt64)).new(@@page)
+  def get : UInt64
+    @sum.get
   end
 end
 
-def work(input : String, n : Int32, fragment : Bool) : Nil
+# One thread's checksum of its *n* parses.
+def work(input : String, n : Int32, fragment : Bool) : UInt64
   sum = 0_u64
   i = 0
   while i < n
@@ -36,22 +36,20 @@ def work(input : String, n : Int32, fragment : Bool) : Nil
     end
     i = i + 1
   end
-  Total.sum.value.add(sum)
+  sum
 end
 
 input = File.read(Program.args[0])
 n = Program.args[1].to_i
 count = Program.args[2].to_i
 fragment = Program.args.size > 3 && Program.args[3] == "fragment"
-Total.setup
+total = Total.new
 started = Time.monotonic
 threads = Array(IyiThread).new
-t = 0
-while t < count
-  threads << IyiThread.start { work(input, n, fragment) }
-  t = t + 1
+count.times do
+  threads << IyiThread.start { total.add(work(input, n, fragment)) }
 end
 threads.each { |thread| thread.join }
 took = Time.monotonic - started
-puts Total.sum.value.get
+puts total.get
 puts took.total_nanoseconds.to_i64

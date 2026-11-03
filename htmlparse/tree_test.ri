@@ -11,7 +11,28 @@ import htmlparse/parse::{parse_document, parse_fragment, Options, Document}
 import htmlparse/dom::{Dom, NodeKind, Namespace}
 import htmlparse/serialize::{serialize_children, SerializeOptions}
 
-def dump(dom : Dom, node : Int32, depth : Int32, w : Str::Builder) : Nil
+# The lines of *text*, which begin at *starts*, in sorted order.
+def write_sorted(text : String, starts : Array(Int32), indent : String,
+                 w : String::Builder) : Nil
+  order = [] of Int32
+  starts.each_index do |i|
+    order << i
+    at = order.size - 1
+    while at > 0 && line_at(text, starts, i) < line_at(text, starts, order[at - 1])
+      order[at] = order[at - 1]
+      at = at - 1
+    end
+    order[at] = i
+  end
+  order.each { |i| w << "| " << indent << "  " << line_at(text, starts, i) << "\n" }
+end
+
+def line_at(text : String, starts : Array(Int32), i : Int32) : String
+  stop = i + 1 < starts.size ? starts[i + 1] : text.bytesize
+  text[starts[i], stop - starts[i]]
+end
+
+def dump(dom : Dom, node : Int32, depth : Int32, w : String::Builder) : Nil
   indent = "  " * depth
   case dom.kind(node)
   when NodeKind::Doctype
@@ -31,7 +52,8 @@ def dump(dom : Dom, node : Int32, depth : Int32, w : Str::Builder) : Nil
              else                        ""
              end
     w << "| " << indent << "<" << prefix << dom.name(node) << ">\n"
-    lines = [] of String
+    lines = String::Builder.new(64)
+    starts = [] of Int32
     i = 0
     while i < dom.attrs_count(node)
       attr = dom.attr(node, i)
@@ -41,10 +63,11 @@ def dump(dom : Dom, node : Int32, depth : Int32, w : Str::Builder) : Nil
            when 6_u8 then "xmlns "
            else           ""
            end
-      lines << "#{ns}#{attr.name.to_heap}=\"#{attr.value.to_heap}\""
+      starts << lines.length
+      lines << ns << attr.name << "=\"" << attr.value << "\""
       i = i + 1
     end
-    lines.sorted.each { |line| w << "| " << indent << "  " << line << "\n" }
+    write_sorted(lines.finish, starts, indent, w)
     contents = dom.contents(node)
     if contents >= 0
       w << "| " << indent << "  content\n"
@@ -62,68 +85,81 @@ def dump(dom : Dom, node : Int32, depth : Int32, w : Str::Builder) : Nil
   end
 end
 
-# The tree's dump and its HTML, one after the other.
-def tree(input : String, fragment : String?, scripting : Bool) : Tuple(String, String)
-  result = ""
-  html = ""
-  tape do
-    options = Options.new(scripting: scripting)
-    if context = fragment
-      namespace = Namespace::Html
-      name = context
-      if context.starts_with?("svg ")
-        namespace = Namespace::Svg
-        name = context[4, context.size - 4]
-      elsif context.starts_with?("math ")
-        namespace = Namespace::MathML
-        name = context[5, context.size - 5]
-      end
-      document = parse_fragment(input.as_tape, name.as_tape, namespace, options)
-    else
-      document = parse_document(input.as_tape, options)
+# The tree's dump into *w*, then its HTML into *h*.
+def tree(input : String, fragment : String?, scripting : Bool,
+         w : String::Builder, h : String::Builder) : Nil
+  # Text of its own: JSON's has an origin the program-tape check cannot
+  # tell, and it would refuse the parser's own arrays (see the report).
+  text = ""
+  text << input
+  options = Options.new(scripting: scripting)
+  if context = fragment
+    namespace = Namespace::Html
+    name = context
+    if context.starts_with?("svg ")
+      namespace = Namespace::Svg
+      name = context[4, context.size - 4]
+    elsif context.starts_with?("math ")
+      namespace = Namespace::MathML
+      name = context[5, context.size - 5]
     end
-    dom = document.dom
-    w = Str::Builder.new(256)
-    child = dom.first_child(document.root)
-    while child >= 0
-      dump(dom, child, 0, w)
-      child = dom.next_sibling(child)
+    parse_fragment(text, name, namespace, options) do |document|
+      write_tree(document, scripting, w, h)
     end
-    result = w.finish.to_heap
-    h = Str::Builder.new(256)
-    serialize_children(dom, document.root, h, SerializeOptions.new(raw_noscript: scripting))
-    html = h.finish.to_heap
+  else
+    parse_document(text, options) do |document|
+      write_tree(document, scripting, w, h)
+    end
   end
-  {result, html}
 end
 
-failures = 0
-cases = 0
-only = Program.args.size > 0 ? Program.args[0] : nil
-File.read("spec/golden/tree.jsonl").each_line do |line|
-  next if line.empty?
-  test = JSON.parse(line)
-  label = "#{test["file"].as_s}##{test["index"].as_i}"
-  next if only && only != label
-  cases = cases + 1
-  got, html = tree(test["input"].as_s, test["fragment"].as_s?, test["scripting"].as_bool)
-  if html != test["html"].as_s
-    failures = failures + 1
-    if failures <= 15 || only
-      puts "FAIL #{label} (serialized)"
-      puts "  input: #{test["input"].as_s.inspect}"
-      puts "  expected: #{test["html"].as_s.inspect}"
-      puts "  got:      #{html.inspect}"
-    end
-  elsif got != test["output"].as_s
-    failures = failures + 1
-    if failures <= 15 || only
-      puts "FAIL #{label}"
-      puts "  input: #{test["input"].as_s.inspect}#{test["fragment"].as_s? ? " in " + test["fragment"].as_s : ""}"
-      puts "  expected:\n#{test["output"].as_s}"
-      puts "  got:\n#{got}"
+def write_tree(document : Document, scripting : Bool, w : String::Builder,
+               h : String::Builder) : Nil
+  dom = document.dom
+  child = dom.first_child(document.root)
+  while child >= 0
+    dump(dom, child, 0, w)
+    child = dom.next_sibling(child)
+  end
+  serialize_children(dom, document.root, h,
+    SerializeOptions.new(raw_noscript: scripting))
+end
+
+def main : Int32
+  failures = 0
+  cases = 0
+  only = Program.args.size > 0 ? Program.args[0] : nil
+  File.read("spec/golden/tree.jsonl").each_line do |line|
+    next if line.empty?
+    test = JSON.parse(line)
+    label = "#{test["file"].as_s}##{test["index"].as_i}"
+    next if only && only != label
+    cases = cases + 1
+    w = String::Builder.new(256)
+    h = String::Builder.new(256)
+    tree(test["input"].as_s, test["fragment"].as_s?, test["scripting"].as_bool, w, h)
+    got = w.finish
+    html = h.finish
+    if html != test["html"].as_s
+      failures = failures + 1
+      if failures <= 15 || only
+        puts "FAIL #{label} (serialized)"
+        puts "  input: #{test["input"].as_s.inspect}"
+        puts "  expected: #{test["html"].as_s.inspect}"
+        puts "  got:      #{html.inspect}"
+      end
+    elsif got != test["output"].as_s
+      failures = failures + 1
+      if failures <= 15 || only
+        puts "FAIL #{label}"
+        puts "  input: #{test["input"].as_s.inspect}#{test["fragment"].as_s? ? " in " + test["fragment"].as_s : ""}"
+        puts "  expected:\n#{test["output"].as_s}"
+        puts "  got:\n#{got}"
+      end
     end
   end
+  puts "tree: #{cases - failures}/#{cases} as html5ever"
+  failures
 end
-puts "tree: #{cases - failures}/#{cases} as html5ever"
-exit 1 if failures > 0
+
+exit 1 if main > 0

@@ -96,12 +96,12 @@ end
 # and *namespace* on a foreign element's (`xlink:href`).
 @[OnTape]
 pub struct Attr
-  getter name : Str
-  getter value : Str
-  getter prefix : Str
+  getter name : String
+  getter value : String
+  getter prefix : String
   getter namespace : UInt8
 
-  def initialize(@name : Str, @value : Str, @prefix : Str, @namespace : UInt8)
+  def initialize(@name : String, @value : String, @prefix : String, @namespace : UInt8)
   end
 end
 
@@ -113,22 +113,22 @@ end
 pub struct Token
   getter kind : TokenKind
   # The tag's or the doctype's name.
-  getter name : Str
+  getter name : String
   # The text's or the comment's.
-  getter text : Str
+  getter text : String
   getter attrs_start : Int32
   getter attrs_count : Int32
   getter self_closing : Bool
-  getter public_id : Str
-  getter system_id : Str
+  getter public_id : String
+  getter system_id : String
   getter has_name : Bool
   getter has_public_id : Bool
   getter has_system_id : Bool
   getter force_quirks : Bool
 
-  def initialize(@kind : TokenKind, @name : Str, @text : Str, @attrs_start : Int32,
-                 @attrs_count : Int32, @self_closing : Bool, @public_id : Str,
-                 @system_id : Str, @has_name : Bool, @has_public_id : Bool,
+  def initialize(@kind : TokenKind, @name : String, @text : String, @attrs_start : Int32,
+                 @attrs_count : Int32, @self_closing : Bool, @public_id : String,
+                 @system_id : String, @has_name : Bool, @has_public_id : Bool,
                  @has_system_id : Bool, @force_quirks : Bool)
   end
 end
@@ -138,17 +138,19 @@ end
 # that is not.
 @[OnTape]
 struct Bytes
-  @input : Str
+  @input : String
   @start : Int32
   @size : Int32
   @owned : Bool
-  @writer : Str::Builder
+  @writer : String::Builder
+  @writer_start : Int32
 
-  def initialize(@input : Str)
+  def initialize(@input : String)
     @start = 0
     @size = 0
     @owned = false
-    @writer = Str::Builder.new(0)
+    @writer = String::Builder.new(@input.bytesize)
+    @writer_start = 0
   end
 
   def clear : Nil
@@ -157,7 +159,7 @@ struct Bytes
   end
 
   def empty? : Bool
-    @owned ? @writer.length == 0 : @size == 0
+    @owned ? @writer.length == @writer_start : @size == 0
   end
 
   # The input's byte at *at*, next after these or not.
@@ -198,7 +200,7 @@ struct Bytes
     @writer.push(byte)
   end
 
-  def push_text(text : ::String) : Nil
+  def push_text(text : String) : Nil
     own
     @writer.append(text)
   end
@@ -234,27 +236,29 @@ struct Bytes
     @size
   end
 
-  def push_tape(text : Str) : Nil
+  def push_tape(text : String) : Nil
     return if text.empty?
     own
     @writer.append(text)
   end
 
-  def value : Str
-    return @writer.finish if @owned
+  def value : String
+    if @owned
+      return @writer.finish[@writer_start, @writer.length - @writer_start]
+    end
     @input[@start, @size]
   end
 
-  def ==(text : ::String) : Bool
+  def ==(text : String) : Bool
     value == text
   end
 
   # The bytes so far in a writer of their own, so that what follows them
-  # need not follow them in the input. Each value has its own writer: one
-  # handed out stays as it was.
+  # need not follow them in the input. Append each token to the same
+  # stable writer so previously returned views remain valid.
   private def own : Nil
     return if @owned
-    @writer = Str::Builder.new(@size + 16)
+    @writer_start = @writer.length
     @writer.append(@input[@start, @size]) if @size > 0
     @owned = true
   end
@@ -262,9 +266,9 @@ end
 
 # *input* with every "\r\n" and "\r" a "\n", as the input stream
 # preprocessing asks: *input* itself when it has no carriage return.
-pub def normalize_newlines(input : Str) : Str
+pub def normalize_newlines(input : String) : String
   return input unless input.includes?('\r')
-  writer = Str::Builder.new(input.bytesize)
+  writer = String::Builder.new(input.bytesize)
   i = 0
   size = input.bytesize
   while i < size
@@ -309,9 +313,9 @@ REPLACEMENT = 0xfffd_u32
 
 @[OnTape]
 pub struct Tokenizer
-  getter input : Str
+  getter input : String
   # Every tag's attributes, each tag's after the last's.
-  getter attrs : Ary(Attr)
+  getter attrs : Array(Attr)
   getter state : State
   # Set when a tag starts an attribute past `max_attributes` (Gumbo's
   # limit; html5ever's `too_many_attributes`, not upstream's).
@@ -327,7 +331,7 @@ pub struct Tokenizer
   # 0 for no limit.
   property max_attributes : Int32
 
-  @scan : Str::Scanner
+  @scan : String::Scanner
   @size : Int32
   @raw : RawKind
   @doctype_id_system : Bool
@@ -349,29 +353,28 @@ pub struct Tokenizer
   @has_public_id : Bool
   @has_system_id : Bool
   @force_quirks : Bool
-  @last_start_tag : Str
+  @last_start_tag : String
   @has_last_start_tag : Bool
-  @queued : Ary(Token)
+  @queued : Array(Token)
   @next : Int32
-  @empty : Str
+  @empty : String
 
   # A tokenizer for *input*, with room for the attributes of most pages
   # that size.
   #
-  # The tree's arrays are made big enough at the start, here and in
-  # `TreeBuilder`'s `Dom.new`: one that grows when it is not at the tape's
-  # end moves to a mapping of its own, a megabyte at least, which a parse
-  # of a short fragment would make and unmap every time.
-  def initialize(input : Str)
-    initialize(input, Ary(Attr).new(input.bytesize // 16 + 16))
+  # Made big enough at the start: an array that grows when it is not at
+  # the tape's end takes a reservation of its own, which a parse of a
+  # short fragment would make every time.
+  def initialize(input : String)
+    initialize(input, Array(Attr).new(input.bytesize // 16 + 16))
   end
 
   # A tokenizer for *input*, adding tags' attributes to *attrs*: a tree
   # parsed into one that is there already shares its attributes.
-  def initialize(input : Str, attrs : Ary(Attr))
+  def initialize(input : String, attrs : Array(Attr))
     @input = input
     @size = input.bytesize
-    @scan = Str::Scanner.new(input)
+    @scan = String::Scanner.new(input)
     @state = State::Data
     @raw = RawKind::Rcdata
     @doctype_id_system = false
@@ -401,7 +404,7 @@ pub struct Tokenizer
     @empty = input[0, 0]
     @last_start_tag = @empty
     @has_last_start_tag = false
-    @queued = Ary(Token).new
+    @queued = Array(Token).new
     @next = 0
   end
 
@@ -412,7 +415,7 @@ pub struct Tokenizer
     @raw = raw
   end
 
-  def last_start_tag=(name : Str) : Nil
+  def last_start_tag=(name : String) : Nil
     @last_start_tag = name
     @has_last_start_tag = true
   end
@@ -635,14 +638,13 @@ pub struct Tokenizer
 
   # Whether the input at the position is *pattern*, ASCII case ignored
   # unless *exact*, and if so, past it.
-  private def eat(pattern : ::String, exact : Bool) : Bool
-    wanted_bytes = pattern.as_tape
-    count = wanted_bytes.bytesize
+  private def eat(pattern : String, exact : Bool) : Bool
+    count = pattern.bytesize
     return false if @scan.offset + count > @size
     i = 0
     while i < count
       byte = @input[@scan.offset + i]
-      wanted = wanted_bytes[i]
+      wanted = pattern[i]
       return false unless byte == wanted || (!exact && lower(byte) == wanted)
       i = i + 1
     end

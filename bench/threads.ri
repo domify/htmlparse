@@ -11,18 +11,11 @@ import std/file::{File}
 import std/time::{Time}
 import htmlparse::{htmlparse}
 
+# The input, on the program's tape: the threads only read it.
+INPUT = File.copy_to(Program.tape, Program.args[0])
+
 # The threads' running checksum, which they all add to.
-class Total
-  @sum = Atomic(UInt64).new(0_u64)
-
-  def add(value : UInt64) : Nil
-    @sum.add(value)
-  end
-
-  def get : UInt64
-    @sum.get
-  end
-end
+TOTAL = Atomic(UInt64).new(0_u64)
 
 # One thread's checksum of its *n* parses.
 def work(input : String, n : Int32, fragment : Bool) : UInt64
@@ -39,17 +32,15 @@ def work(input : String, n : Int32, fragment : Bool) : UInt64
   sum
 end
 
-input = File.read(Program.args[0])
 n = Program.args[1].to_i
 count = Program.args[2].to_i
 fragment = Program.args.size > 3 && Program.args[3] == "fragment"
-total = Total.new
 started = Time.monotonic
 threads = Array(IyiThread).new
 count.times do
-  threads << IyiThread.start { total.add(work(input, n, fragment)) }
+  threads << IyiThread.start { TOTAL.add(work(INPUT, n, fragment)) }
 end
 threads.each { |thread| thread.join }
 took = Time.monotonic - started
-puts total.get
+puts TOTAL.get
 puts took.total_nanoseconds.to_i64

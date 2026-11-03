@@ -13,7 +13,26 @@ import htmlparse/parse::{parse_document, parse_fragment, Options, Document}
 import htmlparse/dom::{Namespace}
 import htmlparse/serialize::{serialize_children, SerializeOptions}
 
-input = File.read(Program.args[0])
+# The time since *started* added to *parsing*; written out when *write*,
+# its time added to *writing* and its checksum to *sum*.
+def measure(document : Document, input : String, started : Time::Span,
+            write : Bool, sum : UInt64, parsing : Int64,
+            writing : Int64) : Tuple(UInt64, Int64, Int64)
+  parsed = Time.monotonic
+  parsing = parsing + (parsed - started).total_nanoseconds.to_i64
+  if write
+    w = String::Builder.new(input.bytesize)
+    serialize_children(document.dom, document.root, w, SerializeOptions.new)
+    text = w.finish
+    writing = writing + (Time.monotonic - parsed).total_nanoseconds.to_i64
+    hash = 14695981039346656037_u64
+    text.each_byte { |byte| hash = (hash ^ byte.to_u64) &* 1099511628211_u64 }
+    sum = sum &+ hash
+  end
+  {sum, parsing, writing}
+end
+
+input = File.copy_to(Program.tape, Program.args[0])
 n = Program.args[1].to_i
 fragment = Program.args[2] == "fragment"
 write = Program.args[3] != "0"
@@ -22,23 +41,16 @@ parsing = 0_i64
 writing = 0_i64
 i = 0
 while i < n
-  tape do
-    started = Time.monotonic
-    document = if fragment
-                 parse_fragment(input.as_tape, "body".as_tape, Namespace::Html, Options.new)
-               else
-                 parse_document(input.as_tape, Options.new)
-               end
-    parsed = Time.monotonic
-    parsing = parsing + (parsed - started).total_nanoseconds.to_i64
-    if write
-      w = Str::Builder.new(input.bytesize)
-      serialize_children(document.dom, document.root, w, SerializeOptions.new)
-      text = w.finish
-      writing = writing + (Time.monotonic - parsed).total_nanoseconds.to_i64
-      hash = 14695981039346656037_u64
-      text.each_byte { |byte| hash = (hash ^ byte.to_u64) &* 1099511628211_u64 }
-      sum = sum &+ hash
+  started = Time.monotonic
+  if fragment
+    parse_fragment(input, "body", Namespace::Html, Options.new) do |document|
+      sum, parsing, writing = measure(document, input, started, write, sum,
+        parsing, writing)
+    end
+  else
+    parse_document(input, Options.new) do |document|
+      sum, parsing, writing = measure(document, input, started, write, sum,
+        parsing, writing)
     end
   end
   i = i + 1

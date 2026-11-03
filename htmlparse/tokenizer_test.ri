@@ -9,7 +9,7 @@ import std/file::{File}
 import std/json::{JSON, Any}
 import htmlparse/tokenizer::{Tokenizer, Token, TokenKind, State, RawKind, normalize_newlines}
 
-def json_string(text : Str, w : Str::Builder) : Nil
+def json_string(text : String, w : String::Builder) : Nil
   w << '"'
   text.each_byte do |byte|
     case byte
@@ -18,8 +18,8 @@ def json_string(text : Str, w : Str::Builder) : Nil
     else
       if byte < 0x20_u8
         w << "\\u00"
-        w << "0123456789abcdef"[(byte >> 4).to_i32]
-        w << "0123456789abcdef"[(byte & 0x0f_u8).to_i32]
+        w.push("0123456789abcdef"[(byte >> 4).to_i32])
+        w.push("0123456789abcdef"[(byte & 0x0f_u8).to_i32])
       else
         w.push(byte)
       end
@@ -28,7 +28,7 @@ def json_string(text : Str, w : Str::Builder) : Nil
   w << '"'
 end
 
-def json_value(text : Str, present : Bool, w : Str::Builder) : Nil
+def json_value(text : String, present : Bool, w : String::Builder) : Nil
   if present
     json_string(text, w)
   else
@@ -37,10 +37,10 @@ def json_value(text : Str, present : Bool, w : Str::Builder) : Nil
 end
 
 # The tokens as the oracle writes them: text runs joined, a NUL as text.
-def tokens_json(input : String, state : String, last_start_tag : String?) : String
-  result = ""
-  tape do
-    tokenizer = Tokenizer.new(normalize_newlines(input.as_tape))
+def tokens_json(input : String, state : String, last_start_tag : String?,
+                w : String::Builder) : Nil
+  begin
+    tokenizer = Tokenizer.new(normalize_newlines(input))
     tokenizer.discard_bom = false
     case state
     when "PLAINTEXT state"     then tokenizer.start_in(State::Plaintext, RawKind::Rcdata)
@@ -50,10 +50,10 @@ def tokens_json(input : String, state : String, last_start_tag : String?) : Stri
     when "CDATA section state" then tokenizer.start_in(State::CdataSection, RawKind::Rcdata)
     end
     if last = last_start_tag
-      tokenizer.last_start_tag = Str.new(last)
+      tokenizer.last_start_tag = String.new(last)
     end
-    w = Str::Builder.new(256)
-    text = Str::Builder.new(64)
+    text = String::Builder.new(64)
+    text_start = 0
     count = 0
     w << '['
     while true
@@ -66,13 +66,13 @@ def tokens_json(input : String, state : String, last_start_tag : String?) : Stri
         text.push(0_u8)
         next
       end
-      if text.length > 0
+      if text.length > text_start
         w << ',' if count > 0
         w << "[\"Character\","
-        json_string(text.finish, w)
+        json_string(text.finish[text_start, text.length - text_start], w)
         w << ']'
         count = count + 1
-        text = Str::Builder.new(64)
+        text_start = text.length
       end
       break if token.kind == TokenKind::EOF
       w << ',' if count > 0
@@ -113,28 +113,32 @@ def tokens_json(input : String, state : String, last_start_tag : String?) : Stri
       end
     end
     w << ']'
-    result = w.finish.to_heap
   end
-  result
 end
 
-failures = 0
-cases = 0
-File.read("spec/golden/tokenizer.jsonl").each_line do |line|
-  next if line.empty?
-  test = JSON.parse(line)
-  cases = cases + 1
-  last = test["lastStartTag"].as_s?
-  got = tokens_json(test["input"].as_s, test["state"].as_s, last)
-  if JSON.parse(got) != test["output"]
-    failures = failures + 1
-    if failures <= 20
-      puts "FAIL #{test["file"].as_s} ##{test["index"].as_i} (#{test["state"].as_s}): #{test["description"].as_s}"
-      puts "  input:    #{test["input"].as_s.inspect}"
-      puts "  expected: #{test["output"].to_json}"
-      puts "  got:      #{got}"
+def main : Int32
+  failures = 0
+  cases = 0
+  File.read("spec/golden/tokenizer.jsonl").each_line do |line|
+    next if line.empty?
+    test = JSON.parse(line)
+    cases = cases + 1
+    last = test["lastStartTag"].as_s?
+    w = String::Builder.new(256)
+    tokens_json(test["input"].as_s, test["state"].as_s, last, w)
+    got = w.finish
+    if JSON.parse(got) != test["output"]
+      failures = failures + 1
+      if failures <= 20
+        puts "FAIL #{test["file"].as_s} ##{test["index"].as_i} (#{test["state"].as_s}): #{test["description"].as_s}"
+        puts "  input:    #{test["input"].as_s.inspect}"
+        puts "  expected: #{test["output"].to_json}"
+        puts "  got:      #{got}"
+      end
     end
   end
+  puts "tokenizer: #{cases - failures}/#{cases} as html5ever"
+  failures
 end
-puts "tokenizer: #{cases - failures}/#{cases} as html5ever"
-exit 1 if failures > 0
+
+exit 1 if main > 0

@@ -50,8 +50,11 @@ class Table
   def initialize
     @keys = Array(String).new(512, "")
     @values = Array(UInt16).new(512, 0_u16)
+  end
+
+  def fill : Nil
     NAMES.each_with_index do |name, i|
-      slot = (hash(Str.view(name)) & 511_u32).to_i32
+      slot = (hash(name) & 511_u32).to_i32
       while @values[slot] != 0_u16
         slot = (slot + 1) & 511
       end
@@ -60,13 +63,13 @@ class Table
     end
   end
 
-  def hash(key : Str) : UInt32
+  def hash(key : String) : UInt32
     h = 2166136261_u32
     key.each_byte { |b| h = (h ^ b.to_u32) &* 16777619_u32 }
     h
   end
 
-  def lookup(name : Str) : Tag
+  def lookup(name : String) : Tag
     slot = (hash(name) & 511_u32).to_i32
     while true
       value = @values[slot]
@@ -78,9 +81,14 @@ class Table
   end
 end
 
-TABLE = Table.new
+# Filled inside the initializer, so that threads may read it afterwards.
+TABLE = begin
+  table = Table.new
+  table.fill
+  table
+end
 
-pub def tag_of(name : Str) : Tag
+pub def tag_of(name : String) : Tag
   TABLE.lookup(name)
 end
 

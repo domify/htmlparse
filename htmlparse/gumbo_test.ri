@@ -16,80 +16,85 @@ def check(condition : Bool, message : String) : Nil
 end
 
 def parse(html : String) : ParseError
-  error = ParseError::None
-  tape do
-    error = parse_fragment(html.as_tape, "body".as_tape, Namespace::Html, Options.gumbo).error
-  end
-  error
+  input = ""
+  input << html
+  parse_fragment(input, "body", Namespace::Html, Options.gumbo) { |document| document.error }
 end
 
 # The fragment written back; a leading byte order mark dropped first, as
 # dom.rs does before it parses.
-def roundtrip(html : String) : String
-  result = ""
-  tape do
-    input = html.as_tape
-    if input.starts_with?("\u{feff}")
-      input = input[3, input.bytesize - 3]
-    end
-    document = parse_fragment(input, "body".as_tape, Namespace::Html, Options.gumbo)
-    w = Str::Builder.new(64)
+def roundtrip(html : String, w : String::Builder) : String
+  input = ""
+  input << html
+  skip = input.starts_with?("\u{feff}") ? 3 : 0
+  parse_fragment(input[skip, input.bytesize - skip], "body", Namespace::Html, Options.gumbo) do |document|
     serialize_children(document.dom, document.root, w, SerializeOptions.new)
-    result = w.finish.to_heap
   end
-  result
+  w.finish
+end
+
+def roundtrip?(html : String, expected : String) : Bool
+  w = String::Builder.new(64)
+  roundtrip(html, w) == expected
 end
 
 def numbered_attributes(from : Int32, to : Int32) : String
   (from..to).map { |i| "a#{i}=#{i}" }.join(" ")
 end
 
-ok = ParseError::None
-deep = ParseError::TreeDepthExceeded
-many = ParseError::TooManyAttributes
+def main : Nil
+  ok = ParseError::None
+  deep = ParseError::TreeDepthExceeded
+  many = ParseError::TooManyAttributes
 
-# enforces_gumbo_tree_depth_limit
-check parse("<b>" * 400) == ok, "400 <b>s"
-check parse("<b>" * 401) == deep, "401 <b>s"
-check parse("<b>" * 401 + "x") == deep, "401 <b>s and text"
-check parse("<b>" * 400 + "<p>") == deep, "400 <b>s and a <p>"
-check parse("<b>" * 397 + "<table><td>") == deep, "397 <b>s and a cell"
+  # enforces_gumbo_tree_depth_limit
+  check parse("<b>" * 400) == ok, "400 <b>s"
+  check parse("<b>" * 401) == deep, "401 <b>s"
+  check parse("<b>" * 401 + "x") == deep, "401 <b>s and text"
+  check parse("<b>" * 400 + "<p>") == deep, "400 <b>s and a <p>"
+  check parse("<b>" * 397 + "<table><td>") == deep, "397 <b>s and a cell"
 
-# counts_open_elements_as_gumbo_does_rather_than_the_final_trees_depth
-check parse("<b>" * 400 + "<br>") == ok, "a void element is not open"
-check parse("<b>" * 400 + "</p>") == ok, "</p> makes a <p> and closes it"
-check parse("<b>" * 401 + "</b>" * 401) == deep, "closing again does not undo it"
-check parse(("<b>" + "<span>" * 300 + "<div>" * 10 + "</b>") * 3) == ok, "the adoption agency moves blocks up"
-check parse("<b>" + "<span>" * 390 + "<div>" * 10 + "</b>" + "<div>" * 300) == deep, "how deep they were counts"
-bs = (1..399).map { |i| "<b id=#{i}>" }.join
-reopened = "<p>#{bs}</p><div><div><table>x"
-check parse(reopened) == ok, "not checked after the input ends"
-check parse(reopened + "<!---->") == deep, "checked after the comment"
+  # counts_open_elements_as_gumbo_does_rather_than_the_final_trees_depth
+  check parse("<b>" * 400 + "<br>") == ok, "a void element is not open"
+  check parse("<b>" * 400 + "</p>") == ok, "</p> makes a <p> and closes it"
+  check parse("<b>" * 401 + "</b>" * 401) == deep, "closing again does not undo it"
+  check parse(("<b>" + "<span>" * 300 + "<div>" * 10 + "</b>") * 3) == ok, "the adoption agency moves blocks up"
+  check parse("<b>" + "<span>" * 390 + "<div>" * 10 + "</b>" + "<div>" * 300) == deep, "how deep they were counts"
+  bs = (1..399).map { |i| "<b id=#{i}>" }.join
+  reopened = "<p>#{bs}</p><div><div><table>x"
+  check parse(reopened) == ok, "not checked after the input ends"
+  check parse(reopened + "<!---->") == deep, "checked after the comment"
 
-# enforces_gumbo_attribute_limit
-check parse("<p #{numbered_attributes(1, 400)}>x</p>") == ok, "400 attributes"
-check parse("<p #{numbered_attributes(1, 401)}>x</p>") == many, "401 attributes"
-check parse("<p #{(["a=1"] * 1000).join(" ")}>x</p>") == ok, "1000 of one attribute"
-check parse("<textarea><p #{numbered_attributes(1, 401)}>") == ok, "attributes in a textarea's text"
+  # enforces_gumbo_attribute_limit
+  check parse("<p #{numbered_attributes(1, 400)}>x</p>") == ok, "400 attributes"
+  check parse("<p #{numbered_attributes(1, 401)}>x</p>") == many, "401 attributes"
+  check parse("<p #{(["a=1"] * 1000).join(" ")}>x</p>") == ok, "1000 of one attribute"
+  check parse("<textarea><p #{numbered_attributes(1, 401)}>") == ok, "attributes in a textarea's text"
 
-# counts_attributes_as_gumbos_tokenizer_does
-attributes = numbered_attributes(1, 400)
-check parse("<p #{attributes} a1=again>x</p>") == many, "before dropping a duplicate"
-check parse("<p>x</p #{attributes} a401>") == many, "on an end tag"
-check parse("<p #{attributes} a401") == many, "on a tag the input ends in"
+  # counts_attributes_as_gumbos_tokenizer_does
+  attributes = numbered_attributes(1, 400)
+  check parse("<p #{attributes} a1=again>x</p>") == many, "before dropping a duplicate"
+  check parse("<p>x</p #{attributes} a401>") == many, "on an end tag"
+  check parse("<p #{attributes} a401") == many, "on a tag the input ends in"
 
-# keeps_what_the_tokenizer_already_deduplicated
-check roundtrip("<p title=a TITLE=b id=c title=d>x</p>") == "<p title=\"a\" id=\"c\">x</p>", "duplicates"
-check roundtrip("<svg xlink:href=a href=b viewbox=c><a xlink:href=d>x</a></svg>") ==
-      "<svg xlink:href=\"a\" href=\"b\" viewBox=\"c\"><a xlink:href=\"d\">x</a></svg>", "foreign attributes"
+  # keeps_what_the_tokenizer_already_deduplicated
+  check roundtrip?("<p title=a TITLE=b id=c title=d>x</p>",
+    "<p title=\"a\" id=\"c\">x</p>"), "duplicates"
+  check roundtrip?("<svg xlink:href=a href=b viewbox=c><a xlink:href=d>x</a></svg>",
+    "<svg xlink:href=\"a\" href=\"b\" viewBox=\"c\"><a xlink:href=\"d\">x</a></svg>"), "foreign attributes"
 
-# drops_only_a_leading_byte_order_mark
-check roundtrip("\u{feff}\u{feff}x") == "\u{feff}x", "one byte order mark"
-check roundtrip("<script></script>\u{feff}x") == "<script></script>\u{feff}x", "none after a script"
+  # drops_only_a_leading_byte_order_mark
+  check roundtrip?("\u{feff}\u{feff}x",
+    "\u{feff}x"), "one byte order mark"
+  check roundtrip?("<script></script>\u{feff}x",
+    "<script></script>\u{feff}x"), "none after a script"
 
-# dom.rs's serializer: Nokogiri's escaping, with the brackets option
-check roundtrip("<a title=\"a<b>c\">d>e&nbsp;</a>") == "<a title=\"a<b>c\">d&gt;e&nbsp;</a>", "escaping"
+  # dom.rs's serializer: Nokogiri's escaping, with the brackets option
+  check roundtrip?("<a title=\"a<b>c\">d>e&nbsp;</a>",
+    "<a title=\"a<b>c\">d&gt;e&nbsp;</a>"), "escaping"
+end
 
+main
 FAILURES.each { |failure| puts "FAIL #{failure}" }
 puts "gumbo: #{FAILURES.empty? ? "pass" : "#{FAILURES.size} failed"}"
 exit 1 unless FAILURES.empty?

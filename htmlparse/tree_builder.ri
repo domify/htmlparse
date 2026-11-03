@@ -80,15 +80,21 @@ NO_NODE = -1
 struct Tok
   property kind : TokenKind
   property split : Split
-  property text : Str
-  property name : Str
+  property text : String
+  property name : String
   property tag : Tag
   property attrs_start : Int32
   property attrs_count : Int32
   property self_closing : Bool
 
-  def initialize(@kind : TokenKind, @split : Split, @text : Str, @name : Str,
+  def initialize(@kind : TokenKind, @split : Split, @text : String, @name : String,
                  @tag : Tag, @attrs_start : Int32, @attrs_count : Int32, @self_closing : Bool)
+  end
+
+  # This token under another name, as a new value.
+  def renamed(name : String, tag : Tag) : Tok
+    Tok.new(@kind, @split, @text, name, tag, @attrs_start, @attrs_count,
+      @self_closing)
   end
 
   def start?(tag : Tag) : Bool
@@ -113,16 +119,16 @@ struct Tok
 end
 
 # An entry of the list of active formatting elements: an element and the
-# tag it was made for, or a marker (`node` NO_NODE).
-@[OnTape]
+# tag it was made for, or a marker (`node` NO_NODE). The element's name is
+# in the tree: numbers only, so that moving entries within the list copies
+# no view of it into itself.
 struct FormatEntry
   property node : Int32
-  getter name : Str
   getter tag : Tag
   getter attrs_start : Int32
   getter attrs_count : Int32
 
-  def initialize(@node : Int32, @name : Str, @tag : Tag, @attrs_start : Int32, @attrs_count : Int32)
+  def initialize(@node : Int32, @tag : Tag, @attrs_start : Int32, @attrs_count : Int32)
   end
 
   def marker? : Bool
@@ -133,9 +139,9 @@ end
 @[OnTape]
 struct PendingText
   getter split : Split
-  getter text : Str
+  getter text : String
 
-  def initialize(@split : Split, @text : Str)
+  def initialize(@split : Split, @text : String)
   end
 end
 
@@ -158,12 +164,12 @@ private def ascii_whitespace?(byte : UInt8) : Bool
   byte == 0x20_u8 || byte == 0x0a_u8 || byte == 0x09_u8 || byte == 0x0c_u8 || byte == 0x0d_u8
 end
 
-private def any_not_whitespace(text : Str) : Bool
+private def any_not_whitespace(text : String) : Bool
   text.each_byte { |byte| return true unless ascii_whitespace?(byte) }
   false
 end
 
-private def eq_ignore_ascii_case(a : Str, b : Str) : Bool
+private def eq_ignore_ascii_case(a : String, b : String) : Bool
   return false unless a.bytesize == b.bytesize
   i = 0
   while i < a.bytesize
@@ -192,28 +198,31 @@ pub struct TreeBuilder
   @max_open_elements : Int32
   @mode : InsertionMode
   @orig_mode : InsertionMode
-  @template_modes : Ary(InsertionMode)
-  @pending_table_text : Ary(PendingText)
-  @open : Ary(Int32)
-  @formatting : Ary(FormatEntry)
+  @template_modes : Array(InsertionMode)
+  @pending_table_text : Array(PendingText)
+  @pending_start : Int32
+  @open : Array(Int32)
+  @formatting : Array(FormatEntry)
   @head_elem : Int32
   @form_elem : Int32
   @context_elem : Int32
   @frameset_ok : Bool
   @ignore_lf : Bool
   @foster_parenting : Bool
-  @empty : Str
+  @empty : String
   # The node this parse's tree hangs from.
   getter document : Int32
   # What a step hands back with `Reprocess` and `SplitWhitespace`.
   @next_mode : InsertionMode
   @next_token : Tok
+  # The rest of a text token split at its whitespace.
+  @more_token : Tok
 
   # A tree builder for a document of its own. *max_tree_depth* is Gumbo's
   # limit, 0 for none.
   def initialize(tokenizer : Tokenizer, scripting : Bool, template_contents : Bool, max_tree_depth : Int32)
     initialize(tokenizer, scripting, template_contents, max_tree_depth,
-      Dom.new(tokenizer.attrs, tokenizer.input[0, 0], tokenizer.input.bytesize // 8 + 64), false)
+      Dom.new(tokenizer.attrs, tokenizer.input[0, 0]), false)
   end
 
   # A tree builder that adds to *dom*, whose attributes *tokenizer*
@@ -222,7 +231,7 @@ pub struct TreeBuilder
   def initialize(@tokenizer : Tokenizer, scripting : Bool, template_contents : Bool, max_tree_depth : Int32,
                  @dom : Dom, own_document : Bool)
     @empty = @tokenizer.input[0, 0]
-    @document = own_document ? @dom.create_fragment : @dom.document
+    @document = @dom.document
     @scripting = scripting
     @template_contents = template_contents
     @max_open_elements = max_tree_depth > 0 ? max_tree_depth + 1 : 0
@@ -231,10 +240,11 @@ pub struct TreeBuilder
     @quirks_mode = QuirksMode::NoQuirks
     @mode = InsertionMode::Initial
     @orig_mode = InsertionMode::Initial
-    @template_modes = Ary(InsertionMode).new
-    @pending_table_text = Ary(PendingText).new
-    @open = Ary(Int32).new(16)
-    @formatting = Ary(FormatEntry).new
+    @template_modes = Array(InsertionMode).new
+    @pending_table_text = Array(PendingText).new
+    @pending_start = 0
+    @open = Array(Int32).new(16)
+    @formatting = Array(FormatEntry).new
     @head_elem = NO_NODE
     @form_elem = NO_NODE
     @context_elem = NO_NODE
@@ -243,13 +253,18 @@ pub struct TreeBuilder
     @foster_parenting = false
     @next_mode = InsertionMode::Initial
     @next_token = Tok.new(TokenKind::EOF, Split::NotSplit, @empty, @empty, Tag::Other, 0, 0, false)
+    @more_token = @next_token
+  end
+
+  def start_fragment_document : Nil
+    @document = @dom.create_fragment
   end
 
   # Sets up a fragment parse in the context of an element named *name* in
   # *namespace* (`new_for_fragment`), and the tokenizer's state for it.
   # *context_allows_scripting* is html5ever's
   # `context_element_allows_scripting`.
-  def fragment(namespace : Namespace, name : Str, context_allows_scripting : Bool) : Nil
+  def fragment(namespace : Namespace, name : String, context_allows_scripting : Bool) : Nil
     @context_elem = create_element(namespace, name, tag_of(name), @tokenizer.attrs.size, 0)
     @template_modes << InsertionMode::InTemplate if @dom.html?(@context_elem, Tag::Template)
     create_root(@tokenizer.attrs.size, 0)
@@ -328,34 +343,36 @@ pub struct TreeBuilder
       text = token.text
       text = text[1, text.bytesize - 1] if ignore_lf && text.bytesize > 0 && text[0] == 0x0a_u8
       return Next::Continue if text.empty?
-      tok = Tok.new(TokenKind::Text, Split::NotSplit, text, @empty, Tag::Other, 0, 0, false)
-      process_to_completion(tok)
+      @next_token = Tok.new(TokenKind::Text, Split::NotSplit, text, @empty,
+        Tag::Other, 0, 0, false)
+      process_to_completion
     when TokenKind::StartTag, TokenKind::EndTag
-      tok = Tok.new(token.kind, Split::NotSplit, @empty, token.name, tag_of(token.name), token.attrs_start,
-        token.attrs_count, token.self_closing)
-      process_to_completion(tok)
+      @next_token = Tok.new(token.kind, Split::NotSplit, @empty, token.name,
+        tag_of(token.name), token.attrs_start, token.attrs_count,
+        token.self_closing)
+      process_to_completion
     else
-      tok = Tok.new(token.kind, Split::NotSplit, token.text, @empty, Tag::Other, 0, 0, false)
-      process_to_completion(tok)
+      @next_token = Tok.new(token.kind, Split::NotSplit, token.text, @empty,
+        Tag::Other, 0, 0, false)
+      process_to_completion
     end
   end
 
-  private def process_to_completion(first : Tok) : Next
-    token = first
+  # The token in `@next_token`, and any it splits or reprocesses into. The
+  # tokens stay in fields: each round of the loop frees what it makes.
+  private def process_to_completion : Next
     has_more = false
-    more = first
     while true
+      token = @next_token
       outcome = foreign?(token) ? step_foreign(token) : step(@mode, token)
       case outcome
       when Outcome::Done, Outcome::DoneAckSelfClosing
         return Next::Continue unless has_more
-        token = more
+        @next_token = @more_token
         has_more = false
       when Outcome::Reprocess
         @mode = @next_mode
-        token = @next_token
       when Outcome::ReprocessForeign
-        token = @next_token
       when Outcome::SplitWhitespace
         text = @next_token.text
         whitespace = ascii_whitespace?(text[0])
@@ -363,11 +380,12 @@ pub struct TreeBuilder
         while run < text.bytesize && ascii_whitespace?(text[run]) == whitespace
           run = run + 1
         end
-        token = Tok.new(TokenKind::Text, whitespace ? Split::Whitespace : Split::NotWhitespace, text[0, run],
+        @next_token = Tok.new(TokenKind::Text,
+          whitespace ? Split::Whitespace : Split::NotWhitespace, text[0, run],
           @empty, Tag::Other, 0, 0, false)
         if run < text.bytesize
-          more = Tok.new(TokenKind::Text, Split::NotSplit, text[run, text.bytesize - run], @empty, Tag::Other,
-            0, 0, false)
+          @more_token = Tok.new(TokenKind::Text, Split::NotSplit,
+            text[run, text.bytesize - run], @empty, Tag::Other, 0, 0, false)
           has_more = true
         end
       when Outcome::Script
@@ -419,8 +437,8 @@ pub struct TreeBuilder
     QuirksMode::NoQuirks
   end
 
-  private def lowercase(text : Str) : Str
-    writer = Str::Builder.new(text.bytesize)
+  private def lowercase(text : String) : String
+    writer = String::Builder.new(text.bytesize)
     text.each_byte { |byte| writer.push(byte >= 0x41_u8 && byte <= 0x5a_u8 ? byte + 0x20_u8 : byte) }
     writer.finish
   end
@@ -492,7 +510,7 @@ pub struct TreeBuilder
 
   # Whether *node* is the HTML element named *name*, as *tag*: by name
   # where it is not one the parser knows.
-  private def named?(node : Int32, tag : Tag, name : Str) : Bool
+  private def named?(node : Int32, tag : Tag, name : String) : Bool
     return @dom.html?(node, tag) unless tag == Tag::Other
     @dom.html?(node, Tag::Other) && @dom.name(node) == name
   end
@@ -565,7 +583,7 @@ pub struct TreeBuilder
 
   # Whether the HTML element *tag* (by *name* where it is `Other`) is in
   # *scope*.
-  private def in_scope_named(scope : Int32, tag : Tag, name : Str) : Bool
+  private def in_scope_named(scope : Int32, tag : Tag, name : String) : Bool
     i = @open.size - 1
     while i >= 0
       node = @open[i]
@@ -701,7 +719,7 @@ pub struct TreeBuilder
 
   # Pops up to and including the HTML element *tag* (by *name* where it is
   # `Other`); how many it popped.
-  private def pop_until_named(tag : Tag, name : Str) : Int32
+  private def pop_until_named(tag : Tag, name : String) : Int32
     n = 0
     while true
       n = n + 1
@@ -727,7 +745,7 @@ pub struct TreeBuilder
     n
   end
 
-  private def expect_to_close(tag : Tag, name : Str) : Nil
+  private def expect_to_close(tag : Tag, name : String) : Nil
     pop_until_named(tag, name)
   end
 
@@ -829,7 +847,7 @@ pub struct TreeBuilder
   end
 
   private def push_marker : Nil
-    @formatting << FormatEntry.new(NO_NODE, @empty, Tag::Other, 0, 0)
+    @formatting << FormatEntry.new(NO_NODE, Tag::Other, 0, 0)
   end
 
   private def clear_active_formatting_to_marker : Nil
@@ -859,8 +877,10 @@ pub struct TreeBuilder
     end
     while true
       entry = @formatting[index]
-      node = insert_element(true, Namespace::Html, entry.name, entry.tag, entry.attrs_start, entry.attrs_count)
-      @formatting[index] = FormatEntry.new(node, entry.name, entry.tag, entry.attrs_start, entry.attrs_count)
+      node = clone_element(entry)
+      insert_node_at(appropriate_place_for_insertion(NO_NODE), node)
+      push(node)
+      @formatting[index] = FormatEntry.new(node, entry.tag, entry.attrs_start, entry.attrs_count)
       break if index == @formatting.size - 1
       index = index + 1
     end
@@ -868,7 +888,7 @@ pub struct TreeBuilder
 
   # Whether two tags have the same name and attributes, in any order.
   private def same_tag?(token : Tok, entry : FormatEntry) : Bool
-    return false unless token.tag == entry.tag && token.name == entry.name
+    return false unless token.tag == entry.tag && token.name == @dom.name(entry.node)
     return false unless token.attrs_count == entry.attrs_count
     attrs = @dom.attrs
     i = 0
@@ -905,15 +925,25 @@ pub struct TreeBuilder
     end
     remove_formatting_at(first_match) if matches >= 3
     node = insert_element_for(token)
-    @formatting << FormatEntry.new(node, token.name, token.tag, token.attrs_start, token.attrs_count)
+    @formatting << FormatEntry.new(node, token.tag, token.attrs_start, token.attrs_count)
     node
   end
 
   # --- inserting ----------------------------------------------------------
 
-  private def create_element(namespace : Namespace, name : Str, tag : Tag, start : Int32, count : Int32) : Int32
+  private def create_element(namespace : Namespace, name : String, tag : Tag, start : Int32, count : Int32) : Int32
     node = @dom.create_element(namespace, name, tag, start, count)
     if @template_contents && namespace == Namespace::Html && tag == Tag::Template
+      @dom.set_contents(node, @dom.create_fragment)
+    end
+    node
+  end
+
+  # A new HTML element like *entry*'s, with *entry*'s attributes.
+  private def clone_element(entry : FormatEntry) : Int32
+    node = @dom.clone_element(entry.node, entry.tag, entry.attrs_start,
+      entry.attrs_count)
+    if @template_contents && entry.tag == Tag::Template
       @dom.set_contents(node, @dom.create_fragment)
     end
     node
@@ -955,7 +985,7 @@ pub struct TreeBuilder
     end
   end
 
-  private def insert_text_at(point : InsertionPoint, text : Str) : Nil
+  private def insert_text_at(point : InsertionPoint, text : String) : Nil
     if !point.foster?
       @dom.append_text(point.parent, text)
     elsif @dom.parent(point.element) != NO_NODE
@@ -969,33 +999,33 @@ pub struct TreeBuilder
     insert_node_at(appropriate_place_for_insertion(override_target), node)
   end
 
-  private def append_text(text : Str) : Outcome
+  private def append_text(text : String) : Outcome
     insert_text_at(appropriate_place_for_insertion(NO_NODE), text)
     Outcome::Done
   end
 
-  private def append_comment(text : Str) : Outcome
+  private def append_comment(text : String) : Outcome
     insert_appropriately(@dom.create_comment(text), NO_NODE)
     Outcome::Done
   end
 
-  private def append_comment_to_doc(text : Str) : Outcome
+  private def append_comment_to_doc(text : String) : Outcome
     @dom.append(@document, @dom.create_comment(text))
     Outcome::Done
   end
 
-  private def append_comment_to_html(text : Str) : Outcome
+  private def append_comment_to_html(text : String) : Outcome
     @dom.append(html_elem, @dom.create_comment(text))
     Outcome::Done
   end
 
   private def create_root(start : Int32, count : Int32) : Nil
-    node = create_element(Namespace::Html, "html".as_tape, Tag::Html, start, count)
+    node = create_element(Namespace::Html, "html", Tag::Html, start, count)
     push(node)
     @dom.append(@document, node)
   end
 
-  private def insert_element(push : Bool, namespace : Namespace, name : Str, tag : Tag, start : Int32,
+  private def insert_element(push : Bool, namespace : Namespace, name : String, tag : Tag, start : Int32,
                              count : Int32) : Int32
     node = create_element(namespace, name, tag, start, count)
     insert_node_at(appropriate_place_for_insertion(NO_NODE), node)
@@ -1011,9 +1041,8 @@ pub struct TreeBuilder
     insert_element(false, Namespace::Html, token.name, token.tag, token.attrs_start, token.attrs_count)
   end
 
-  private def insert_phantom(name : ::String) : Int32
-    tape_name = name.as_tape
-    insert_element(true, Namespace::Html, tape_name, tag_of(tape_name), @dom.attrs.size, 0)
+  private def insert_phantom(name : String) : Int32
+    insert_element(true, Namespace::Html, name, tag_of(name), @dom.attrs.size, 0)
   end
 
   private def is_type_hidden(token : Tok) : Bool
@@ -1021,14 +1050,14 @@ pub struct TreeBuilder
     while i < token.attrs_count
       attr = @dom.attrs[token.attrs_start + i]
       if attr.namespace == 0_u8 && attr.name == "type"
-        return eq_ignore_ascii_case(attr.value, "hidden".as_tape)
+        return eq_ignore_ascii_case(attr.value, "hidden")
       end
       i = i + 1
     end
     false
   end
 
-  private def has_attr?(token : Tok, name : ::String) : Bool
+  private def has_attr?(token : Tok, name : String) : Bool
     i = 0
     while i < token.attrs_count
       attr = @dom.attrs[token.attrs_start + i]
@@ -1073,24 +1102,13 @@ pub struct TreeBuilder
       return
     end
     8.times do
-      fmt_index = -1
-      i = @formatting.size - 1
-      while i >= 0
-        entry = @formatting[i]
-        break if entry.marker?
-        if entry.tag == subject
-          fmt_index = i
-          break
-        end
-        i = i - 1
-      end
+      fmt_index = last_formatting_before_marker(subject)
       if fmt_index < 0
         name = subject_name(subject)
         process_end_tag_in_body(Tok.new(TokenKind::EndTag, Split::NotSplit, @empty, name, subject, 0, 0, false))
         return
       end
-      fmt_entry = @formatting[fmt_index]
-      fmt_elem = fmt_entry.node
+      fmt_elem = @formatting[fmt_index].node
       fmt_stack_index = -1
       i = @open.size - 1
       while i >= 0
@@ -1142,12 +1160,7 @@ pub struct TreeBuilder
           remove_open_at(node_index)
           next
         end
-        entry = @formatting[node_formatting_index]
-        new_element = create_element(Namespace::Html, entry.name, entry.tag, entry.attrs_start, entry.attrs_count)
-        @open[node_index] = new_element
-        @formatting[node_formatting_index] = FormatEntry.new(new_element, entry.name, entry.tag,
-          entry.attrs_start, entry.attrs_count)
-        node = new_element
+        node = recreate_formatting(node_index, node_formatting_index)
         if last_node == furthest_block
           bookmark_replace = false
           bookmark = node
@@ -1158,17 +1171,16 @@ pub struct TreeBuilder
       end
       @dom.detach(last_node)
       insert_appropriately(last_node, common_ancestor)
-      new_element = create_element(Namespace::Html, fmt_entry.name, fmt_entry.tag, fmt_entry.attrs_start,
-        fmt_entry.attrs_count)
-      new_entry = FormatEntry.new(new_element, fmt_entry.name, fmt_entry.tag, fmt_entry.attrs_start,
-        fmt_entry.attrs_count)
+      new_element = recreate_formatting_element(fmt_elem)
       @dom.reparent_children(furthest_block, new_element)
       @dom.append(furthest_block, new_element)
       if bookmark_replace
-        @formatting[position_in_active_formatting(bookmark)] = new_entry
+        renew_formatting(position_in_active_formatting(bookmark),
+          position_in_active_formatting(fmt_elem), new_element)
       else
         index = position_in_active_formatting(bookmark) + 1
-        insert_formatting_at(index, new_entry)
+        insert_renewed_formatting(index,
+          position_in_active_formatting(fmt_elem), new_element)
         remove_formatting_at(position_in_active_formatting(fmt_elem))
       end
       remove_from_stack(fmt_elem)
@@ -1183,22 +1195,66 @@ pub struct TreeBuilder
     end
   end
 
-  private def subject_name(subject : Tag) : Str
+  # A new element like the one of the formatting entry for *element*.
+  private def recreate_formatting_element(element : Int32) : Int32
+    clone_element(@formatting[position_in_active_formatting(element)])
+  end
+
+  # The entry at *from* for *node*, stored at *index*.
+  private def renew_formatting(index : Int32, from : Int32, node : Int32) : Nil
+    entry = @formatting[from]
+    @formatting[index] = FormatEntry.new(node, entry.tag, entry.attrs_start,
+      entry.attrs_count)
+  end
+
+  # The entry at *from* for *node*, inserted at *index*.
+  private def insert_renewed_formatting(index : Int32, from : Int32,
+                                        node : Int32) : Nil
+    entry = @formatting[from]
+    insert_formatting_at(index, FormatEntry.new(node, entry.tag,
+      entry.attrs_start, entry.attrs_count))
+  end
+
+  # The index of the last formatting entry for *subject* after the last
+  # marker, or -1.
+  private def last_formatting_before_marker(subject : Tag) : Int32
+    i = @formatting.size - 1
+    while i >= 0
+      entry = @formatting[i]
+      return -1 if entry.marker?
+      return i if entry.tag == subject
+      i = i - 1
+    end
+    -1
+  end
+
+  # A new element for the formatting entry at *index*, in that entry's
+  # place and in place of the open element at *node_index*.
+  private def recreate_formatting(node_index : Int32, index : Int32) : Int32
+    entry = @formatting[index]
+    element = clone_element(entry)
+    @open[node_index] = element
+    @formatting[index] = FormatEntry.new(element, entry.tag, entry.attrs_start,
+      entry.attrs_count)
+    element
+  end
+
+  private def subject_name(subject : Tag) : String
     case subject
-    when Tag::A      then "a".as_tape
-    when Tag::B      then "b".as_tape
-    when Tag::Big    then "big".as_tape
-    when Tag::Code   then "code".as_tape
-    when Tag::Em     then "em".as_tape
-    when Tag::Font   then "font".as_tape
-    when Tag::I      then "i".as_tape
-    when Tag::Nobr   then "nobr".as_tape
-    when Tag::S      then "s".as_tape
-    when Tag::Small  then "small".as_tape
-    when Tag::Strike then "strike".as_tape
-    when Tag::Strong then "strong".as_tape
-    when Tag::Tt     then "tt".as_tape
-    else                  "u".as_tape
+    when Tag::A      then "a"
+    when Tag::B      then "b"
+    when Tag::Big    then "big"
+    when Tag::Code   then "code"
+    when Tag::Em     then "em"
+    when Tag::Font   then "font"
+    when Tag::I      then "i"
+    when Tag::Nobr   then "nobr"
+    when Tag::S      then "s"
+    when Tag::Small  then "small"
+    when Tag::Strike then "strike"
+    when Tag::Strong then "strong"
+    when Tag::Tt     then "tt"
+    else                  "u"
     end
   end
 
@@ -1297,10 +1353,8 @@ pub struct TreeBuilder
     while i < SVG_TAG_NAMES.size
       pair = SVG_TAG_NAMES[i]
       if token.name == pair[0]
-        name = pair[1].as_tape
-        token.name = name
-        token.tag = tag_of(name)
-        return token
+        name = SVG_TAG_NAMES[i][1]
+        return token.renamed(name, tag_of(name))
       end
       i = i + 1
     end
@@ -1321,18 +1375,25 @@ pub struct TreeBuilder
     start = attrs.size
     i = 0
     while i < token.attrs_count
-      attr = attrs[token.attrs_start + i]
-      found = adjusted(attr, table)
-      if found >= 0
-        row = table[found]
-        attrs << Attr.new(row[1].as_tape, attr.value, row[2].as_tape, row[3])
-      else
-        attrs << attr
-      end
+      push_adjusted_attr(token.attrs_start + i, table)
       i = i + 1
     end
     token.attrs_start = start
     token
+  end
+
+  # The attribute at *index* once more at the end of the attributes,
+  # renamed if *table* says so.
+  private def push_adjusted_attr(index : Int32, table : Array(Tuple(String, String, String, UInt8))) : Nil
+    attrs = @dom.attrs
+    attr = attrs[index]
+    found = adjusted(attr, table)
+    if found >= 0
+      row = table[found]
+      attrs << Attr.new(row[1], attr.value, row[2], row[3])
+    else
+      attrs << Attr.new(attr.name, attr.value, attr.prefix, attr.namespace)
+    end
   end
 
   private def adjusted(attr : Attr, table : Array(Tuple(String, String, String, UInt8))) : Int32
@@ -1370,7 +1431,7 @@ pub struct TreeBuilder
   private def step_foreign(token : Tok) : Outcome
     case token.kind
     when TokenKind::Null
-      return append_text("\u{fffd}".as_tape)
+      return append_text("\u{fffd}")
     when TokenKind::Text
       @frameset_ok = false if any_not_whitespace(token.text)
       return append_text(token.text)
@@ -1520,7 +1581,7 @@ pub struct TreeBuilder
         end
         return parse_raw_data(token, RawKind::Rawtext)
       when Tag::Script
-        node = create_element(Namespace::Html, "script".as_tape, Tag::Script, token.attrs_start, token.attrs_count)
+        node = create_element(Namespace::Html, "script", Tag::Script, token.attrs_start, token.attrs_count)
         insert_appropriately(node, NO_NODE)
         push(node)
         return to_raw_text_mode(RawKind::ScriptData)
@@ -1777,9 +1838,8 @@ pub struct TreeBuilder
       @frameset_ok = false
       Outcome::DoneAckSelfClosing
     when Tag::Image
-      token.name = "img".as_tape
-      token.tag = Tag::Img
-      step(InsertionMode::InBody, token)
+      @next_token = token.renamed("img", Tag::Img)
+      step(InsertionMode::InBody, @next_token)
     when Tag::Textarea
       @ignore_lf = true
       @frameset_ok = false
@@ -1900,9 +1960,9 @@ pub struct TreeBuilder
       end
       Outcome::Done
     when Tag::Br
-      start = Tok.new(TokenKind::StartTag, Split::NotSplit, @empty, token.name, token.tag, @dom.attrs.size, 0,
-        token.self_closing)
-      step(InsertionMode::InBody, start)
+      @next_token = Tok.new(TokenKind::StartTag, Split::NotSplit, @empty,
+        token.name, token.tag, @dom.attrs.size, 0, token.self_closing)
+      step(InsertionMode::InBody, @next_token)
     else
       process_end_tag_in_body(token)
       Outcome::Done
@@ -2004,25 +2064,33 @@ pub struct TreeBuilder
       @pending_table_text << PendingText.new(token.split, token.text)
       return Outcome::Done
     end
-    pending = @pending_table_text
-    contains_nonspace = pending.any? do |entry|
+    stop = @pending_table_text.size
+    contains_nonspace = false
+    i = @pending_start
+    while i < stop
+      entry = @pending_table_text[i]
       case entry.split
-      when Split::Whitespace    then false
-      when Split::NotWhitespace then true
-      else                           any_not_whitespace(entry.text)
+      when Split::NotWhitespace then contains_nonspace = true
+      when Split::NotSplit
+        contains_nonspace = true if any_not_whitespace(entry.text)
       end
+      i = i + 1
     end
-    if contains_nonspace
-      pending.each do |entry|
-        foster_parent_in_body(Tok.new(TokenKind::Text, entry.split, entry.text, @empty, Tag::Other, 0, 0, false))
+    i = @pending_start
+    while i < stop
+      entry = @pending_table_text[i]
+      if contains_nonspace
+        @next_token = Tok.new(TokenKind::Text, entry.split, entry.text, @empty,
+          Tag::Other, 0, 0, false)
+        foster_parent_in_body(@next_token)
+      else
+        append_text(entry.text)
       end
-    else
-      pending.each { |entry| append_text(entry.text) }
+      i = i + 1
     end
-    # Emptied once read (html5ever's `mem::take`) rather than made anew:
-    # a new array for each table's text would stay on the tape until the
-    # parse ends. Nothing above adds to it.
-    @pending_table_text.clear
+    # Read once (html5ever's `mem::take`) by moving past it: the tree keeps
+    # views of the entries' text, so the array only grows.
+    @pending_start = stop
     reprocess(@orig_mode, token)
   end
 
@@ -2483,121 +2551,123 @@ HTML4_PUBLIC_PREFIXES = [
 ]
 
 SVG_TAG_NAMES = [
-  {"altglyph", "altGlyph"},
-  {"altglyphdef", "altGlyphDef"},
-  {"altglyphitem", "altGlyphItem"},
-  {"animatecolor", "animateColor"},
-  {"animatemotion", "animateMotion"},
-  {"animatetransform", "animateTransform"},
-  {"clippath", "clipPath"},
-  {"feblend", "feBlend"},
-  {"fecolormatrix", "feColorMatrix"},
-  {"fecomponenttransfer", "feComponentTransfer"},
-  {"fecomposite", "feComposite"},
-  {"feconvolvematrix", "feConvolveMatrix"},
-  {"fediffuselighting", "feDiffuseLighting"},
-  {"fedisplacementmap", "feDisplacementMap"},
-  {"fedistantlight", "feDistantLight"},
-  {"fedropshadow", "feDropShadow"},
-  {"feflood", "feFlood"},
-  {"fefunca", "feFuncA"},
-  {"fefuncb", "feFuncB"},
-  {"fefuncg", "feFuncG"},
-  {"fefuncr", "feFuncR"},
-  {"fegaussianblur", "feGaussianBlur"},
-  {"feimage", "feImage"},
-  {"femerge", "feMerge"},
-  {"femergenode", "feMergeNode"},
-  {"femorphology", "feMorphology"},
-  {"feoffset", "feOffset"},
-  {"fepointlight", "fePointLight"},
-  {"fespecularlighting", "feSpecularLighting"},
-  {"fespotlight", "feSpotLight"},
-  {"fetile", "feTile"},
-  {"feturbulence", "feTurbulence"},
-  {"foreignobject", "foreignObject"},
-  {"glyphref", "glyphRef"},
-  {"lineargradient", "linearGradient"},
-  {"radialgradient", "radialGradient"},
-  {"textpath", "textPath"},
+  {"altglyph", "altGlyph"}.copy_to(Program.tape),
+  {"altglyphdef", "altGlyphDef"}.copy_to(Program.tape),
+  {"altglyphitem", "altGlyphItem"}.copy_to(Program.tape),
+  {"animatecolor", "animateColor"}.copy_to(Program.tape),
+  {"animatemotion", "animateMotion"}.copy_to(Program.tape),
+  {"animatetransform", "animateTransform"}.copy_to(Program.tape),
+  {"clippath", "clipPath"}.copy_to(Program.tape),
+  {"feblend", "feBlend"}.copy_to(Program.tape),
+  {"fecolormatrix", "feColorMatrix"}.copy_to(Program.tape),
+  {"fecomponenttransfer", "feComponentTransfer"}.copy_to(Program.tape),
+  {"fecomposite", "feComposite"}.copy_to(Program.tape),
+  {"feconvolvematrix", "feConvolveMatrix"}.copy_to(Program.tape),
+  {"fediffuselighting", "feDiffuseLighting"}.copy_to(Program.tape),
+  {"fedisplacementmap", "feDisplacementMap"}.copy_to(Program.tape),
+  {"fedistantlight", "feDistantLight"}.copy_to(Program.tape),
+  {"fedropshadow", "feDropShadow"}.copy_to(Program.tape),
+  {"feflood", "feFlood"}.copy_to(Program.tape),
+  {"fefunca", "feFuncA"}.copy_to(Program.tape),
+  {"fefuncb", "feFuncB"}.copy_to(Program.tape),
+  {"fefuncg", "feFuncG"}.copy_to(Program.tape),
+  {"fefuncr", "feFuncR"}.copy_to(Program.tape),
+  {"fegaussianblur", "feGaussianBlur"}.copy_to(Program.tape),
+  {"feimage", "feImage"}.copy_to(Program.tape),
+  {"femerge", "feMerge"}.copy_to(Program.tape),
+  {"femergenode", "feMergeNode"}.copy_to(Program.tape),
+  {"femorphology", "feMorphology"}.copy_to(Program.tape),
+  {"feoffset", "feOffset"}.copy_to(Program.tape),
+  {"fepointlight", "fePointLight"}.copy_to(Program.tape),
+  {"fespecularlighting", "feSpecularLighting"}.copy_to(Program.tape),
+  {"fespotlight", "feSpotLight"}.copy_to(Program.tape),
+  {"fetile", "feTile"}.copy_to(Program.tape),
+  {"feturbulence", "feTurbulence"}.copy_to(Program.tape),
+  {"foreignobject", "foreignObject"}.copy_to(Program.tape),
+  {"glyphref", "glyphRef"}.copy_to(Program.tape),
+  {"lineargradient", "linearGradient"}.copy_to(Program.tape),
+  {"radialgradient", "radialGradient"}.copy_to(Program.tape),
+  {"textpath", "textPath"}.copy_to(Program.tape),
 ]
 
 # (name, local name, prefix, namespace): the namespace as `Namespace`'s
 # value.
 SVG_ATTRIBUTES = [
-  {"attributename", "attributeName", "", 0_u8},
-  {"attributetype", "attributeType", "", 0_u8},
-  {"basefrequency", "baseFrequency", "", 0_u8},
-  {"baseprofile", "baseProfile", "", 0_u8},
-  {"calcmode", "calcMode", "", 0_u8},
-  {"clippathunits", "clipPathUnits", "", 0_u8},
-  {"diffuseconstant", "diffuseConstant", "", 0_u8},
-  {"edgemode", "edgeMode", "", 0_u8},
-  {"filterunits", "filterUnits", "", 0_u8},
-  {"glyphref", "glyphRef", "", 0_u8},
-  {"gradienttransform", "gradientTransform", "", 0_u8},
-  {"gradientunits", "gradientUnits", "", 0_u8},
-  {"kernelmatrix", "kernelMatrix", "", 0_u8},
-  {"kernelunitlength", "kernelUnitLength", "", 0_u8},
-  {"keypoints", "keyPoints", "", 0_u8},
-  {"keysplines", "keySplines", "", 0_u8},
-  {"keytimes", "keyTimes", "", 0_u8},
-  {"lengthadjust", "lengthAdjust", "", 0_u8},
-  {"limitingconeangle", "limitingConeAngle", "", 0_u8},
-  {"markerheight", "markerHeight", "", 0_u8},
-  {"markerunits", "markerUnits", "", 0_u8},
-  {"markerwidth", "markerWidth", "", 0_u8},
-  {"maskcontentunits", "maskContentUnits", "", 0_u8},
-  {"maskunits", "maskUnits", "", 0_u8},
-  {"numoctaves", "numOctaves", "", 0_u8},
-  {"pathlength", "pathLength", "", 0_u8},
-  {"patterncontentunits", "patternContentUnits", "", 0_u8},
-  {"patterntransform", "patternTransform", "", 0_u8},
-  {"patternunits", "patternUnits", "", 0_u8},
-  {"pointsatx", "pointsAtX", "", 0_u8},
-  {"pointsaty", "pointsAtY", "", 0_u8},
-  {"pointsatz", "pointsAtZ", "", 0_u8},
-  {"preservealpha", "preserveAlpha", "", 0_u8},
-  {"preserveaspectratio", "preserveAspectRatio", "", 0_u8},
-  {"primitiveunits", "primitiveUnits", "", 0_u8},
-  {"refx", "refX", "", 0_u8},
-  {"refy", "refY", "", 0_u8},
-  {"repeatcount", "repeatCount", "", 0_u8},
-  {"repeatdur", "repeatDur", "", 0_u8},
-  {"requiredextensions", "requiredExtensions", "", 0_u8},
-  {"requiredfeatures", "requiredFeatures", "", 0_u8},
-  {"specularconstant", "specularConstant", "", 0_u8},
-  {"specularexponent", "specularExponent", "", 0_u8},
-  {"spreadmethod", "spreadMethod", "", 0_u8},
-  {"startoffset", "startOffset", "", 0_u8},
-  {"stddeviation", "stdDeviation", "", 0_u8},
-  {"stitchtiles", "stitchTiles", "", 0_u8},
-  {"surfacescale", "surfaceScale", "", 0_u8},
-  {"systemlanguage", "systemLanguage", "", 0_u8},
-  {"tablevalues", "tableValues", "", 0_u8},
-  {"targetx", "targetX", "", 0_u8},
-  {"targety", "targetY", "", 0_u8},
-  {"textlength", "textLength", "", 0_u8},
-  {"viewbox", "viewBox", "", 0_u8},
-  {"viewtarget", "viewTarget", "", 0_u8},
-  {"xchannelselector", "xChannelSelector", "", 0_u8},
-  {"ychannelselector", "yChannelSelector", "", 0_u8},
-  {"zoomandpan", "zoomAndPan", "", 0_u8},
+  {"attributename", "attributeName", "", 0_u8}.copy_to(Program.tape),
+  {"attributetype", "attributeType", "", 0_u8}.copy_to(Program.tape),
+  {"basefrequency", "baseFrequency", "", 0_u8}.copy_to(Program.tape),
+  {"baseprofile", "baseProfile", "", 0_u8}.copy_to(Program.tape),
+  {"calcmode", "calcMode", "", 0_u8}.copy_to(Program.tape),
+  {"clippathunits", "clipPathUnits", "", 0_u8}.copy_to(Program.tape),
+  {"diffuseconstant", "diffuseConstant", "", 0_u8}.copy_to(Program.tape),
+  {"edgemode", "edgeMode", "", 0_u8}.copy_to(Program.tape),
+  {"filterunits", "filterUnits", "", 0_u8}.copy_to(Program.tape),
+  {"glyphref", "glyphRef", "", 0_u8}.copy_to(Program.tape),
+  {"gradienttransform", "gradientTransform", "", 0_u8}.copy_to(Program.tape),
+  {"gradientunits", "gradientUnits", "", 0_u8}.copy_to(Program.tape),
+  {"kernelmatrix", "kernelMatrix", "", 0_u8}.copy_to(Program.tape),
+  {"kernelunitlength", "kernelUnitLength", "", 0_u8}.copy_to(Program.tape),
+  {"keypoints", "keyPoints", "", 0_u8}.copy_to(Program.tape),
+  {"keysplines", "keySplines", "", 0_u8}.copy_to(Program.tape),
+  {"keytimes", "keyTimes", "", 0_u8}.copy_to(Program.tape),
+  {"lengthadjust", "lengthAdjust", "", 0_u8}.copy_to(Program.tape),
+  {"limitingconeangle", "limitingConeAngle", "", 0_u8}.copy_to(Program.tape),
+  {"markerheight", "markerHeight", "", 0_u8}.copy_to(Program.tape),
+  {"markerunits", "markerUnits", "", 0_u8}.copy_to(Program.tape),
+  {"markerwidth", "markerWidth", "", 0_u8}.copy_to(Program.tape),
+  {"maskcontentunits", "maskContentUnits", "", 0_u8}.copy_to(Program.tape),
+  {"maskunits", "maskUnits", "", 0_u8}.copy_to(Program.tape),
+  {"numoctaves", "numOctaves", "", 0_u8}.copy_to(Program.tape),
+  {"pathlength", "pathLength", "", 0_u8}.copy_to(Program.tape),
+  {"patterncontentunits", "patternContentUnits", "", 0_u8}.copy_to(Program.tape),
+  {"patterntransform", "patternTransform", "", 0_u8}.copy_to(Program.tape),
+  {"patternunits", "patternUnits", "", 0_u8}.copy_to(Program.tape),
+  {"pointsatx", "pointsAtX", "", 0_u8}.copy_to(Program.tape),
+  {"pointsaty", "pointsAtY", "", 0_u8}.copy_to(Program.tape),
+  {"pointsatz", "pointsAtZ", "", 0_u8}.copy_to(Program.tape),
+  {"preservealpha", "preserveAlpha", "", 0_u8}.copy_to(Program.tape),
+  {"preserveaspectratio", "preserveAspectRatio", "", 0_u8}.copy_to(Program.tape),
+  {"primitiveunits", "primitiveUnits", "", 0_u8}.copy_to(Program.tape),
+  {"refx", "refX", "", 0_u8}.copy_to(Program.tape),
+  {"refy", "refY", "", 0_u8}.copy_to(Program.tape),
+  {"repeatcount", "repeatCount", "", 0_u8}.copy_to(Program.tape),
+  {"repeatdur", "repeatDur", "", 0_u8}.copy_to(Program.tape),
+  {"requiredextensions", "requiredExtensions", "", 0_u8}.copy_to(Program.tape),
+  {"requiredfeatures", "requiredFeatures", "", 0_u8}.copy_to(Program.tape),
+  {"specularconstant", "specularConstant", "", 0_u8}.copy_to(Program.tape),
+  {"specularexponent", "specularExponent", "", 0_u8}.copy_to(Program.tape),
+  {"spreadmethod", "spreadMethod", "", 0_u8}.copy_to(Program.tape),
+  {"startoffset", "startOffset", "", 0_u8}.copy_to(Program.tape),
+  {"stddeviation", "stdDeviation", "", 0_u8}.copy_to(Program.tape),
+  {"stitchtiles", "stitchTiles", "", 0_u8}.copy_to(Program.tape),
+  {"surfacescale", "surfaceScale", "", 0_u8}.copy_to(Program.tape),
+  {"systemlanguage", "systemLanguage", "", 0_u8}.copy_to(Program.tape),
+  {"tablevalues", "tableValues", "", 0_u8}.copy_to(Program.tape),
+  {"targetx", "targetX", "", 0_u8}.copy_to(Program.tape),
+  {"targety", "targetY", "", 0_u8}.copy_to(Program.tape),
+  {"textlength", "textLength", "", 0_u8}.copy_to(Program.tape),
+  {"viewbox", "viewBox", "", 0_u8}.copy_to(Program.tape),
+  {"viewtarget", "viewTarget", "", 0_u8}.copy_to(Program.tape),
+  {"xchannelselector", "xChannelSelector", "", 0_u8}.copy_to(Program.tape),
+  {"ychannelselector", "yChannelSelector", "", 0_u8}.copy_to(Program.tape),
+  {"zoomandpan", "zoomAndPan", "", 0_u8}.copy_to(Program.tape),
 ]
 
-MATHML_ATTRIBUTES = [{"definitionurl", "definitionURL", "", 0_u8}]
+MATHML_ATTRIBUTES = [
+  {"definitionurl", "definitionURL", "", 0_u8}.copy_to(Program.tape),
+]
 
 # xlink is `Namespace::XLink` (4), xml `Xml` (5), xmlns `Xmlns` (6).
 FOREIGN_ATTRIBUTES = [
-  {"xlink:actuate", "actuate", "xlink", 4_u8},
-  {"xlink:arcrole", "arcrole", "xlink", 4_u8},
-  {"xlink:href", "href", "xlink", 4_u8},
-  {"xlink:role", "role", "xlink", 4_u8},
-  {"xlink:show", "show", "xlink", 4_u8},
-  {"xlink:title", "title", "xlink", 4_u8},
-  {"xlink:type", "type", "xlink", 4_u8},
-  {"xml:lang", "lang", "xml", 5_u8},
-  {"xml:space", "space", "xml", 5_u8},
-  {"xmlns", "xmlns", "", 6_u8},
-  {"xmlns:xlink", "xlink", "xmlns", 6_u8},
+  {"xlink:actuate", "actuate", "xlink", 4_u8}.copy_to(Program.tape),
+  {"xlink:arcrole", "arcrole", "xlink", 4_u8}.copy_to(Program.tape),
+  {"xlink:href", "href", "xlink", 4_u8}.copy_to(Program.tape),
+  {"xlink:role", "role", "xlink", 4_u8}.copy_to(Program.tape),
+  {"xlink:show", "show", "xlink", 4_u8}.copy_to(Program.tape),
+  {"xlink:title", "title", "xlink", 4_u8}.copy_to(Program.tape),
+  {"xlink:type", "type", "xlink", 4_u8}.copy_to(Program.tape),
+  {"xml:lang", "lang", "xml", 5_u8}.copy_to(Program.tape),
+  {"xml:space", "space", "xml", 5_u8}.copy_to(Program.tape),
+  {"xmlns", "xmlns", "", 6_u8}.copy_to(Program.tape),
+  {"xmlns:xlink", "xlink", "xmlns", 6_u8}.copy_to(Program.tape),
 ]

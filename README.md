@@ -9,10 +9,8 @@ tokenizer cases.
 ```ris
 import htmlparse::{htmlparse}
 
-tape do
-  html = htmlparse(body) # a Str: the HTML, parsed and written back
-  puts html
-end
+html = htmlparse(body) # a String: the HTML, parsed and written back
+puts html
 ```
 
 `htmlparse` parses its input as a fragment in `body` (`document: true`
@@ -24,15 +22,17 @@ its tree node by node and writes it back, is in `examples/tree.ri`
 (`ris run examples/tree.ri`).
 
 `parse_document` reads a whole document; `Document#root` is then the
-document node.
+document node. Both yield the `Document` to a block: the parse's state
+lives in the call's frame, so the tree is good until the block ends.
 
 ## Memory
 
-A parse works on the caller's tape and opens none of its own. The tree,
+A parse keeps its state in the call's frame and opens no tape of its
+own. The tree,
 its names, text and attribute values are tape values: views of the input
 wherever they are its bytes unchanged, copied only where they differ (a
 name lowercased, a character reference read, a NUL replaced). The input
-must outlive the tree. Nodes are one `Ary`, linked by index, so
+must outlive the tree. Nodes are one `Array`, linked by index, so
 foster parenting and the adoption agency move a node in a few writes.
 Text added next to text is kept in pieces and joined once, when read.
 
@@ -52,10 +52,26 @@ deep and 400 attributes a tag, which end the parse with
 same with `raw_noscript` always on. `escape_attribute_brackets` writes
 `<` and `>` in attribute values as the standard has since 2025.
 
+## Limits
+
+Going past either of these ends the program; it is not reported in
+`Document#error`.
+
+- An array on the tape stops at 128 MiB, ris's reservation for it. That
+  is about two million nodes: some 18 MB of ordinary HTML, far less for
+  input that reconstructs many formatting elements, whose tree grows
+  with the square of its size.
+- Serializing recurses, one call per level of the tree: about 6000
+  levels on the main thread and 700 on an `IyiThread` in our measurement.
+  Parsing does not recurse. Set `Options#max_tree_depth` for input you
+  do not trust.
+
 ## Departures from html5ever
 
 None that html5lib-tests' inputs show in the trees, tokens or
-serialization. Parse errors are not reported. The tree
+serialization, save one the standard asks for: `<svg>` and `<math>`
+reconstruct the active formatting elements, which html5ever 0.35 skips.
+Parse errors are not reported. The tree
 sink's choices are fixed to the ones the Rust port and the oracle make:
 no form association, no declarative shadow roots, no MathML
 annotation-xml integration points.
@@ -114,7 +130,7 @@ Memory per parse:
 
 htmlparse's tree takes about eight bytes for each byte of input, and
 html5ever's about half as much again on the larger pages. The tape keeps all of
-it until the parse's `tape do` ends, and gives its pages back when it
+it until the parse's block ends, and gives its pages back when it
 does: a loop of parses faults them in again each time, where html5ever's
 allocator reuses its own.
 

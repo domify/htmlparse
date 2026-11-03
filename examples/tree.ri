@@ -14,7 +14,7 @@ def walk(dom : Dom, node : Int32, depth : Int32) : Nil
   case dom.kind(node)
   when NodeKind::Element
     tape do
-      w = Str::Builder.new(64)
+      w = String::Builder.new(64)
       w << indent << "<" << dom.name(node)
       i = 0
       while i < dom.attrs_count(node)
@@ -26,9 +26,9 @@ def walk(dom : Dom, node : Int32, depth : Int32) : Nil
       puts w
     end
   when NodeKind::Text
-    tape { puts "#{indent}text: #{dom.data(node).to_heap.inspect}" }
+    puts "#{indent}text: #{dom.data(node).inspect}"
   when NodeKind::Comment
-    tape { puts "#{indent}comment: #{dom.data(node).to_heap.inspect}" }
+    puts "#{indent}comment: #{dom.data(node).inspect}"
   end
   child = dom.first_child(node)
   while child >= 0
@@ -39,12 +39,9 @@ end
 
 body = %(<p class="lead">Tere <b>maailm<p>Teine &amp; <a href="/x">link</a><!-- end -->)
 
-tape do
-  # Parsed as html5ever parses a fragment in `body`; `Options.new` for
-  # html5ever's defaults. The tree is on the tape, so it lives until
-  # this block ends.
-  doc = parse_fragment(body.as_tape, "body".as_tape, Namespace::Html, Options.gumbo)
-
+# Parsed as html5ever parses a fragment in `body`; `Options.new` for
+# html5ever's defaults. The tree lives until this block ends.
+parse_fragment(body, "body", Namespace::Html, Options.gumbo) do |doc|
   # `doc.root` is the element the fragment's nodes are the children of.
   child = doc.dom.first_child(doc.root)
   while child >= 0
@@ -53,7 +50,7 @@ tape do
   end
 
   # Back to HTML: what `htmlparse(body)` answers.
-  w = Str::Builder.new(body.bytesize)
+  w = String::Builder.new(body.bytesize)
   serialize_children(doc.dom, doc.root, w, SerializeOptions.new)
   puts w
 end

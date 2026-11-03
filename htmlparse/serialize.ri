@@ -40,7 +40,59 @@ pub def serialize_children(dom : Dom, node : Int32, writer : String::Builder, op
   end
 end
 
-private def serialize_node(dom : Dom, node : Int32, writer : String::Builder, options : SerializeOptions) : Nil
+# *root* and all under it, walked along the tree's links rather than by
+# recursion: the input decides how deep a tree is, and the stack, a thread's
+# above all, is short.
+private def serialize_node(dom : Dom, root : Int32, writer : String::Builder, options : SerializeOptions) : Nil
+  node = root
+  while true
+    write_start(dom, node, writer, options)
+    inside = first_inside(dom, node)
+    if inside >= 0
+      node = inside
+      next
+    end
+    while true
+      write_end(dom, node, writer)
+      return if node == root
+      sibling = dom.next_sibling(node)
+      if sibling >= 0
+        node = sibling
+        break
+      end
+      node = dom.parent(node)
+      # A template's contents are done: its own children come next.
+      owner = dom.contents_owner(node)
+      if owner >= 0
+        node = owner
+        child = dom.first_child(owner)
+        if child >= 0
+          node = child
+          break
+        end
+      end
+    end
+  end
+end
+
+# The first node written inside *node*: its contents' first, if it is a
+# template that has any, then its first child. A void element has none.
+private def first_inside(dom : Dom, node : Int32) : Int32
+  return -1 if void_element?(dom, node)
+  contents = dom.contents(node)
+  if contents >= 0
+    first = dom.first_child(contents)
+    return first if first >= 0
+  end
+  dom.first_child(node)
+end
+
+private def void_element?(dom : Dom, node : Int32) : Bool
+  dom.kind(node) == NodeKind::Element && dom.namespace(node) == Namespace::Html &&
+    void?(dom.tag(node))
+end
+
+private def write_start(dom : Dom, node : Int32, writer : String::Builder, options : SerializeOptions) : Nil
   case dom.kind(node)
   when NodeKind::Element
     writer << '<' << dom.name(node)
@@ -63,11 +115,6 @@ private def serialize_node(dom : Dom, node : Int32, writer : String::Builder, op
       i = i + 1
     end
     writer << '>'
-    return if dom.namespace(node) == Namespace::Html && void?(dom.tag(node))
-    contents = dom.contents(node)
-    serialize_children(dom, contents, writer, options) if contents >= 0
-    serialize_children(dom, node, writer, options)
-    writer << "</" << dom.name(node) << '>'
   when NodeKind::Text
     parent = dom.parent(node)
     if parent >= 0 && raw_text?(dom, parent, options)
@@ -79,9 +126,13 @@ private def serialize_node(dom : Dom, node : Int32, writer : String::Builder, op
     writer << "<!--" << dom.data(node) << "-->"
   when NodeKind::Doctype
     writer << "<!DOCTYPE " << dom.name(node) << '>'
-  else
-    serialize_children(dom, node, writer, options)
   end
+  nil
+end
+
+private def write_end(dom : Dom, node : Int32, writer : String::Builder) : Nil
+  return unless dom.kind(node) == NodeKind::Element && !void_element?(dom, node)
+  writer << "</" << dom.name(node) << '>'
   nil
 end
 

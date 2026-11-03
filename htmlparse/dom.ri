@@ -54,7 +54,8 @@ pub struct Node
   property attrs_start : Int32
   property attrs_count : Int32
   # A template element's contents, a fragment, when the parse keeps them
-  # apart; otherwise its children are its contents.
+  # apart; otherwise its children are its contents. On that fragment, the
+  # template: the way back up, as its `parent` is none.
   property contents : Int32
   # Text added to this text node since its data was last read, as a list
   # of pieces.
@@ -193,6 +194,9 @@ pub struct Dom
     entry = @nodes[node]
     entry.contents = fragment
     @nodes[node] = entry
+    owned = @nodes[fragment]
+    owned.contents = node
+    @nodes[fragment] = owned
   end
 
   # --- reading ----------------------------------------------------------
@@ -248,6 +252,14 @@ pub struct Dom
   end
 
   def contents(node : Int32) : Int32
+    return NO_NODE if @nodes[node].kind == NodeKind::Fragment
+    @nodes[node].contents
+  end
+
+  # The template whose contents the fragment *node* is; NO_NODE for any
+  # other node.
+  def contents_owner(node : Int32) : Int32
+    return NO_NODE unless @nodes[node].kind == NodeKind::Fragment
     @nodes[node].contents
   end
 
@@ -487,14 +499,21 @@ pub struct Dom
       writer << data(node)
       return
     end
-    child = @nodes[node].first_child
-    while child != NO_NODE
-      if text?(child)
-        writer << data(child)
-      elsif element?(child)
-        text_content(child, writer)
+    current = @nodes[node].first_child
+    return if current == NO_NODE
+    # Along the links, not by recursion: the input decides the depth.
+    while true
+      writer << data(current) if text?(current)
+      inside = element?(current) ? @nodes[current].first_child : NO_NODE
+      if inside != NO_NODE
+        current = inside
+        next
       end
-      child = @nodes[child].next
+      while @nodes[current].next == NO_NODE
+        current = @nodes[current].parent
+        return if current == node
+      end
+      current = @nodes[current].next
     end
   end
 

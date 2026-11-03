@@ -1,0 +1,85 @@
+# Trees deeper than a thread's stack: writing them back and reading their
+# text walk the links. Each runs on a thread, whose stack is the shortest.
+module htmlparse/deep_test
+
+import std/text
+import std/int
+import htmlparse/parse::{parse_fragment, Options}
+import htmlparse/dom::{Namespace}
+import htmlparse/serialize::{serialize_children, SerializeOptions}
+
+DEPTH = 20000
+
+def check(label : String, got : String, expected : String) : Nil
+  return if got == expected
+  raise "#{label}: #{got.bytesize} bytes, not #{expected.bytesize}"
+end
+
+def repeat(writer : String::Builder, text : String, count : Int32) : Nil
+  count.times { writer << text }
+end
+
+def round_trip(input : String, result : String::Builder) : Nil
+  parse_fragment(input, "body", Namespace::Html, Options.new) do |document|
+    serialize_children(document.dom, document.root, result, SerializeOptions.new)
+  end
+end
+
+def nested(label : String, tag : String) : Nil
+  input = ""
+  repeat(input, "<#{tag}>", DEPTH)
+  input << "x"
+  expected = ""
+  expected << input
+  repeat(expected, "</#{tag}>", DEPTH)
+  got = ""
+  round_trip(input, got)
+  check(label, got, expected)
+end
+
+def deep_text : Nil
+  input = ""
+  expected = ""
+  DEPTH.times do
+    input << "<div>a"
+    expected << "a"
+  end
+  got = ""
+  parse_fragment(input, "body", Namespace::Html, Options.new) do |document|
+    document.dom.text_content(document.root, got)
+  end
+  check("text_content", got, expected)
+end
+
+# A template's contents, then children of its own, then what follows it.
+def template_children : Nil
+  input = ""
+  input << "<template><b>in</b></template><i>next</i><u>own</u>"
+  got = ""
+  parse_fragment(input, "body", Namespace::Html, Options.new) do |document|
+    dom = document.dom
+    template = dom.first_child(document.root)
+    own = dom.next_sibling(dom.next_sibling(template))
+    dom.detach(own)
+    dom.append(template, own)
+    serialize_children(dom, document.root, got, SerializeOptions.new)
+  end
+  check("template children", got, "<template><b>in</b><u>own</u></template><i>next</i>")
+end
+
+def voids_and_siblings : Nil
+  input = ""
+  input << "<br><p>a<img src=x>b</p><!--c-->d"
+  got = ""
+  round_trip(input, got)
+  check("voids", got, "<br><p>a<img src=\"x\">b</p><!--c-->d")
+end
+
+threads = Array(IyiThread).new
+threads << IyiThread.start { tape { nested("elements", "div") } }
+threads << IyiThread.start { tape { nested("templates", "template") } }
+threads << IyiThread.start { tape { deep_text } }
+threads << IyiThread.start { tape { template_children } }
+threads << IyiThread.start { tape { voids_and_siblings } }
+threads.each { |thread| thread.join }
+puts "deep: ok"

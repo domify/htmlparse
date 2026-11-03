@@ -54,17 +54,14 @@ same with `raw_noscript` always on. `escape_attribute_brackets` writes
 
 ## Limits
 
-Going past either of these ends the program; it is not reported in
-`Document#error`.
+An array on the tape stops at 128 MiB, ris's reservation for it, and
+going past that ends the program; it is not reported in
+`Document#error`. That is about two million nodes: some 18 MB of ordinary
+HTML, far less for input that reconstructs many formatting elements,
+whose tree grows with the square of its size.
 
-- An array on the tape stops at 128 MiB, ris's reservation for it. That
-  is about two million nodes: some 18 MB of ordinary HTML, far less for
-  input that reconstructs many formatting elements, whose tree grows
-  with the square of its size.
-- Serializing recurses, one call per level of the tree: about 6000
-  levels on the main thread and 700 on an `IyiThread` in our measurement.
-  Parsing does not recurse. Set `Options#max_tree_depth` for input you
-  do not trust.
+The depth of a tree is not limited by the stack: parsing, serializing and
+`Dom#text_content` do not recurse.
 
 ## Departures from html5ever
 

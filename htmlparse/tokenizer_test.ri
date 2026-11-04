@@ -7,6 +7,7 @@ import std/text
 import std/int
 import std/file::{File}
 import std/json::{JSON, Any}
+import htmlparse/test_json::{equal_json}
 import htmlparse/tokenizer::{Tokenizer, Token, TokenKind, State, RawKind, normalize_newlines}
 
 def json_string(text : String, w : String::Builder) : Nil
@@ -127,7 +128,7 @@ def main : Int32
     w = String::Builder.new(256)
     tokens_json(test["input"].as_s, test["state"].as_s, last, w)
     got = w.finish
-    if JSON.parse(got) != test["output"]
+    unless equal_json(JSON.parse(got), test["output"])
       failures = failures + 1
       if failures <= 20
         puts "FAIL #{test["file"].as_s} ##{test["index"].as_i} (#{test["state"].as_s}): #{test["description"].as_s}"

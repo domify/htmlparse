@@ -42,7 +42,7 @@ class Table
     slot = (hash(key) & @mask).to_i32
     while true
       if @values[slot] < 0
-        @keys[slot] = key
+        @keys[slot] = key.copy_to(Program.tape)
         @values[slot] = value
         return
       end

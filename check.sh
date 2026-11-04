@@ -5,4 +5,4 @@ cd "$(dirname "$0")"
 RIS="${RIS:-ris}"
 export IYI_PATH="$PWD:$("$RIS" env IYI_PATH)"
 "$RIS" fmt --check htmlparse/*.ri
-"$RIS" test
+"$RIS" test --timeout "${RIS_TEST_TIMEOUT:-900}"

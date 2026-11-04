@@ -1,0 +1,69 @@
+module htmlparse/test_json
+
+import std/json::{Any}
+import std/int
+import std/float
+
+# Compare through borrowed document views, without temporary array views.
+pub def equal_json(left : Any, right : Any) : Bool
+  pending = [{left, right}]
+  at = 0
+  while at < pending.size
+    a, b = pending[at]
+    at += 1
+    if a.kind == "array"
+      return false unless b.kind == "array" && a.size == b.size
+      i = 0
+      while i < a.size
+        pending << {a[i], b[i]}
+        i += 1
+      end
+    elsif a.kind == "object"
+      return false unless b.kind == "object" && a.size == b.size
+      fields = b.as_h
+      a.as_h.each do |key, child|
+        other = fields[key]?
+        return false unless other
+        pending << {child, other}
+      end
+    else
+      x = a.raw
+      y = b.raw
+      case x
+      when Nil
+        return false unless y.nil?
+      when Bool
+        return false unless y.is_a?(Bool) && x == y
+      when String
+        return false unless y.is_a?(String) && x == y
+      when Int64
+        if y.is_a?(Int64)
+          return false unless x == y
+        elsif y.is_a?(Float64)
+          return false unless integer_equals_float?(x, y)
+        else
+          return false
+        end
+      when Float64
+        if y.is_a?(Int64)
+          return false unless integer_equals_float?(y, x)
+        elsif y.is_a?(Float64)
+          return false unless x == y
+        else
+          return false
+        end
+      else
+        return false
+      end
+    end
+  end
+  true
+end
+
+# Keep the integer comparison exact at the edge of Float64's precision.
+def integer_equals_float?(integer : Int64, float : Float64) : Bool
+  return false unless float >= -9223372036854775808.0 &&
+                      float < 9223372036854775808.0
+  whole = float.to_i64
+  whole.to_f64 == float && whole == integer
+end

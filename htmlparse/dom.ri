@@ -82,12 +82,11 @@ pub struct Node
   end
 end
 
-@[OnTape]
 struct Piece
-  getter text : String
+  getter span : Tuple(Int32, Int32)
   property next : Int32
 
-  def initialize(@text : String)
+  def initialize(@span : Tuple(Int32, Int32))
     @next = NO_NODE
   end
 end
@@ -96,25 +95,23 @@ end
 pub struct Dom
   getter nodes : Array(Node)
   getter attrs : Array(Attr)
-  # Elements' local names and doctypes' names, shared by clones.
-  @names : Array(String)
+  # Elements' local names and doctypes' names, as text ranges.
+  @names : Array(Tuple(Int32, Int32))
   # By node: a text's or comment's data, a doctype's public identifier.
-  @datas : Array(String)
+  @datas : Array(Tuple(Int32, Int32))
   # By node: a doctype's system identifier.
-  @system_ids : Array(String)
+  @system_ids : Array(Tuple(Int32, Int32))
   @pieces : Array(Piece)
   # Joined text, one stable buffer that views of it stay valid across.
   @joined : String::Builder
-  @empty : String
 
   # A document node, 0, with *attrs* holding the attributes to come.
-  def initialize(@attrs : Array(Attr), empty : String)
-    @empty = empty
+  def initialize(@attrs : Array(Attr))
     document = Node.new(NodeKind::Document, Namespace::None, Tag::Other)
     @nodes = Array(Node).new(1, document)
-    @names = Array(String).new(1, empty)
-    @datas = Array(String).new(1, empty)
-    @system_ids = Array(String).new(1, empty)
+    @names = Array(Tuple(Int32, Int32)).new(1, {0, 0})
+    @datas = Array(Tuple(Int32, Int32)).new(1, {0, 0})
+    @system_ids = Array(Tuple(Int32, Int32)).new(1, {0, 0})
     @pieces = Array(Piece).new
     @joined = String::Builder.new(0)
   end
@@ -133,31 +130,43 @@ pub struct Dom
 
   # --- making nodes -----------------------------------------------------
 
+  # The buffer of the tree's text, for a tokenizer parsing into the tree to
+  # keep attributes in.
   def text_storage : String::Builder
     @joined
   end
 
-  def keep(text : String) : String
-    return "" if text.empty?
+  private def keep_span(text : String) : Tuple(Int32, Int32)
     at = @joined.bytesize
     @joined.append(text)
-    @joined.finish[at, text.bytesize]
+    {at, text.bytesize}
+  end
+
+  private def view_text(span : Tuple(Int32, Int32)) : String
+    @joined.finish[span[0], span[1]]
+  end
+
+  def keep(text : String) : String
+    view_text(keep_span(text))
   end
 
   private def keep_attr(attr : Attr) : Attr
-    Attr.new(keep(attr.name), keep(attr.value), keep(attr.prefix),
-      attr.namespace)
+    name = keep_span(attr.name)
+    value = keep_span(attr.value)
+    prefix = keep_span(attr.prefix)
+    namespace = attr.namespace
+    Attr.new(view_text(name), view_text(value), view_text(prefix), namespace)
   end
 
   private def add(node : Node, data : String, system_id : String) : Int32
     @nodes << node
-    @datas << keep(data)
-    @system_ids << keep(system_id)
+    @datas << keep_span(data)
+    @system_ids << keep_span(system_id)
     @nodes.size - 1
   end
 
   private def name_index(name : String) : Int32
-    @names << keep(name)
+    @names << keep_span(name)
     @names.size - 1
   end
 
@@ -166,7 +175,7 @@ pub struct Dom
   end
 
   def create_fragment : Int32
-    add(plain(NodeKind::Fragment), @empty, @empty)
+    add(plain(NodeKind::Fragment), "", "")
   end
 
   # An element with the `count` attributes from `start` in `attrs`.
@@ -179,7 +188,7 @@ pub struct Dom
     node.attrs_start = start
     node.attrs_count = count
     node.name_index = name_index(name)
-    add(node, @empty, @empty)
+    add(node, "", "")
   end
 
   # A new HTML element named as *like* is, with the `count` attributes
@@ -189,15 +198,15 @@ pub struct Dom
     node.attrs_start = start
     node.attrs_count = count
     node.name_index = @nodes[like].name_index
-    add(node, @empty, @empty)
+    add(node, "", "")
   end
 
   def create_text(text : String) : Int32
-    add(plain(NodeKind::Text), text, @empty)
+    add(plain(NodeKind::Text), text, "")
   end
 
   def create_comment(text : String) : Int32
-    add(plain(NodeKind::Comment), text, @empty)
+    add(plain(NodeKind::Comment), text, "")
   end
 
   def create_doctype(name : String, public_id : String, system_id : String) : Int32
@@ -225,7 +234,7 @@ pub struct Dom
 
   # The name of a node already read with `entry`.
   def name_of(entry : Node) : String
-    @names[entry.name_index]
+    view_text(@names[entry.name_index])
   end
 
   # The attribute at *index* in the tree's list: `attrs_start` plus its
@@ -267,7 +276,7 @@ pub struct Dom
   end
 
   def name(node : Int32) : String
-    @names[@nodes[node].name_index]
+    view_text(@names[@nodes[node].name_index])
   end
 
   def element?(node : Int32) : Bool
@@ -316,7 +325,7 @@ pub struct Dom
       @joined.append(stored_data(node))
       piece = entry.pieces_first
       while piece != NO_NODE
-        @joined.append(@pieces[piece].text)
+        @joined.append(view_text(@pieces[piece].span))
         piece = @pieces[piece].next
       end
       entry.joined_start = start
@@ -331,16 +340,16 @@ pub struct Dom
   # The data as of the last join: a range of `@joined` once there is one.
   private def stored_data(node : Int32) : String
     entry = @nodes[node]
-    return @datas[node] if entry.joined_start < 0
+    return view_text(@datas[node]) if entry.joined_start < 0
     @joined.finish[entry.joined_start, entry.joined_size]
   end
 
   def public_id(node : Int32) : String
-    @datas[node]
+    view_text(@datas[node])
   end
 
   def system_id(node : Int32) : String
-    @system_ids[node]
+    view_text(@system_ids[node])
   end
 
   # --- changing the tree ------------------------------------------------
@@ -442,12 +451,12 @@ pub struct Dom
   private def join_text(node : Int32, text : String) : Nil
     return if text.empty?
     entry = @nodes[node]
-    if entry.joined_start < 0 && @datas[node].empty? &&
+    if entry.joined_start < 0 && @datas[node][1] == 0 &&
        entry.pieces_first == NO_NODE
-      @datas[node] = keep(text)
+      @datas[node] = keep_span(text)
       return
     end
-    @pieces << Piece.new(keep(text))
+    @pieces << Piece.new(keep_span(text))
     piece = @pieces.size - 1
     if entry.pieces_last == NO_NODE
       entry.pieces_first = piece
@@ -550,12 +559,11 @@ pub struct Dom
     end
   end
 
-  # A copy of the whole tree, nodes at the same indexes, that changes to
-  # either leave the other as it is.
-  def duplicate : Dom
-    copy = Dom.new(Array(Attr).new(@attrs.size + 4), @empty)
+  # The whole tree copied into *copy*, a new `Dom`, nodes at the same
+  # indexes: changes to either leave the other as it is. The caller makes
+  # *copy*, so that it can change it where it made it.
+  def copy_into(copy : Dom) : Nil
     copy.copy_from(self)
-    copy
   end
 
   protected def copy_from(other : Dom) : Nil
@@ -565,15 +573,11 @@ pub struct Dom
     @system_ids.pop
     @joined.append(other.joined_text)
     other.nodes.each { |node| @nodes << node }
-    other.names.each { |name| @names << keep(name) }
-    other.datas.each { |data| @datas << keep(data) }
-    other.system_ids.each { |system_id| @system_ids << keep(system_id) }
+    other.names.each { |span| @names << span }
+    other.datas.each { |span| @datas << span }
+    other.system_ids.each { |span| @system_ids << span }
+    other.pieces.each { |piece| @pieces << piece }
     other.attrs.each { |attr| @attrs << keep_attr(attr) }
-    other.pieces.each do |piece|
-      kept = Piece.new(keep(piece.text))
-      kept.next = piece.next
-      @pieces << kept
-    end
   end
 
   protected def joined_text : String
@@ -584,15 +588,15 @@ pub struct Dom
     @pieces
   end
 
-  protected def names : Array(String)
+  protected def names : Array(Tuple(Int32, Int32))
     @names
   end
 
-  protected def datas : Array(String)
+  protected def datas : Array(Tuple(Int32, Int32))
     @datas
   end
 
-  protected def system_ids : Array(String)
+  protected def system_ids : Array(Tuple(Int32, Int32))
     @system_ids
   end
 

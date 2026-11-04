@@ -1,0 +1,54 @@
+# A tree that outlives what was parsed into it, and copies of a tree.
+module htmlparse/dom_test
+
+import std/text
+import std/int
+import htmlparse/parse::{parse_fragment_into, Options}
+import htmlparse/dom::{Dom, Namespace}
+import htmlparse/tokenizer::{Attr}
+import htmlparse/serialize::{serialize_children, SerializeOptions}
+
+def check(label : String, got : String, expected : String) : Nil
+  return if got == expected
+  raise "#{label}: #{got}, not #{expected}"
+end
+
+def written(dom : Dom, node : Int32, w : String::Builder) : String
+  at = w.bytesize
+  serialize_children(dom, node, w, SerializeOptions.new)
+  w.finish[at, w.bytesize - at]
+end
+
+# Input that ends with this def, parsed into *dom*; its nodes' parent.
+def parse_scratch(dom : Dom, i : Int32) : Int32
+  input = "<p id=\"a#{i}\" title=\"&amp;#{i}\">t#{i}<!--c#{i}--></p>"
+  parse_fragment_into(dom, input, "body", Namespace::Html,
+    Options.new) { |document| document.root }
+end
+
+dom = Dom.new(Array(Attr).new)
+roots = [] of Int32
+# Enough rounds for the tree's arrays and text to grow past their first
+# buffers, and for later rounds' scratch to write over earlier rounds'.
+500.times { |i| roots << parse_scratch(dom, i) }
+output = String::Builder.new
+roots.each_index do |i|
+  check("fragment #{i}", written(dom, roots[i], output),
+    "<p id=\"a#{i}\" title=\"&amp;#{i}\">t#{i}<!--c#{i}--></p>")
+end
+
+expected = "<p id=\"a7\" title=\"&amp;7\">t7<!--c7--></p>"
+paragraph = dom[roots[7]].first_child
+copy = Dom.new(Array(Attr).new)
+dom.copy_into(copy)
+check("copy", written(copy, roots[7], output), expected)
+copy.put_attr(paragraph, 0, Attr.new("id", "changed", "", 0_u8))
+copy.append_text(paragraph, "more")
+check("copy changed", written(copy, roots[7], output),
+  "<p id=\"changed\" title=\"&amp;7\">t7<!--c7-->more</p>")
+check("source unchanged", written(dom, roots[7], output), expected)
+
+dom.put_attr(paragraph, 1, Attr.new("title", "new", "", 0_u8))
+dom.put_attr(paragraph, 2, Attr.new("lang", "et", "", 0_u8))
+check("attributes put", written(dom, roots[7], output),
+  "<p id=\"a7\" title=\"new\" lang=\"et\">t7<!--c7--></p>")

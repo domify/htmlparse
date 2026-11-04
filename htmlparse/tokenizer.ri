@@ -331,6 +331,8 @@ pub struct Tokenizer
   # 0 for no limit.
   property max_attributes : Int32
 
+  @attribute_text : String::Builder
+  @keep_attributes : Bool
   @scan : String::Scanner
   @size : Int32
   @raw : RawKind
@@ -369,9 +371,21 @@ pub struct Tokenizer
     initialize(input, Array(Attr).new(input.bytesize // 16 + 16))
   end
 
-  # A tokenizer for *input*, adding tags' attributes to *attrs*: a tree
-  # parsed into one that is there already shares its attributes.
+  # A tokenizer for *input*, adding tags' attributes to *attrs*.
   def initialize(input : String, attrs : Array(Attr))
+    initialize(input, attrs, String::Builder.new(0), false)
+  end
+
+  # As above, with attributes' text kept in *attribute_text*: they then
+  # outlive *input*, as attributes in a tree that was there already must.
+  def initialize(input : String, attrs : Array(Attr),
+                 attribute_text : String::Builder)
+    initialize(input, attrs, attribute_text, true)
+  end
+
+  private def initialize(input : String, attrs : Array(Attr),
+                         @attribute_text : String::Builder,
+                         @keep_attributes : Bool)
     @input = input
     @size = input.bytesize
     @scan = String::Scanner.new(input)
@@ -593,9 +607,23 @@ pub struct Tokenizer
       end
       i = i + 1
     end
-    @attrs << Attr.new(name, @attr_value.value, @empty, 0_u8) unless duplicate
+    unless duplicate
+      if @keep_attributes
+        @attrs << Attr.new(keep_attribute(name),
+          keep_attribute(@attr_value.value), @empty, 0_u8)
+      else
+        @attrs << Attr.new(name, @attr_value.value, @empty, 0_u8)
+      end
+    end
     @attr_name.clear
     @attr_value.clear
+  end
+
+  private def keep_attribute(text : String) : String
+    return "" if text.empty?
+    at = @attribute_text.bytesize
+    @attribute_text.append(text)
+    @attribute_text.finish[at, text.bytesize]
   end
 
   private def create_doctype : Nil

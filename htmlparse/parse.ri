@@ -97,7 +97,8 @@ end
 # node of its own, to be moved where they belong.
 pub def parse_fragment_into(dom : Dom, input : String, context : String, namespace : Namespace,
                             options : Options, & : Document -> R) : R forall R
-  tokenizer = Tokenizer.new(normalize_newlines(input), dom.attrs)
+  tokenizer = Tokenizer.new(normalize_newlines(input), dom.attrs,
+    dom.text_storage)
   tokenizer.discard_bom = options.discard_bom
   tokenizer.max_attributes = options.max_attributes
   builder = TreeBuilder.new(tokenizer, options.scripting, options.template_contents, options.max_tree_depth,

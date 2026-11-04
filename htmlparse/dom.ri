@@ -133,15 +133,31 @@ pub struct Dom
 
   # --- making nodes -----------------------------------------------------
 
+  def text_storage : String::Builder
+    @joined
+  end
+
+  def keep(text : String) : String
+    return "" if text.empty?
+    at = @joined.bytesize
+    @joined.append(text)
+    @joined.finish[at, text.bytesize]
+  end
+
+  private def keep_attr(attr : Attr) : Attr
+    Attr.new(keep(attr.name), keep(attr.value), keep(attr.prefix),
+      attr.namespace)
+  end
+
   private def add(node : Node, data : String, system_id : String) : Int32
     @nodes << node
-    @datas << data
-    @system_ids << system_id
+    @datas << keep(data)
+    @system_ids << keep(system_id)
     @nodes.size - 1
   end
 
   private def name_index(name : String) : Int32
-    @names << name
+    @names << keep(name)
     @names.size - 1
   end
 
@@ -200,6 +216,23 @@ pub struct Dom
   end
 
   # --- reading ----------------------------------------------------------
+
+  # The whole node, for a reader that wants several of its fields: each
+  # read below copies all of it to answer one.
+  def entry(node : Int32) : Node
+    @nodes[node]
+  end
+
+  # The name of a node already read with `entry`.
+  def name_of(entry : Node) : String
+    @names[entry.name_index]
+  end
+
+  # The attribute at *index* in the tree's list: `attrs_start` plus its
+  # place on the node.
+  def attr_at(index : Int32) : Attr
+    @attrs[index]
+  end
 
   def kind(node : Int32) : NodeKind
     @nodes[node].kind
@@ -411,10 +444,10 @@ pub struct Dom
     entry = @nodes[node]
     if entry.joined_start < 0 && @datas[node].empty? &&
        entry.pieces_first == NO_NODE
-      @datas[node] = text
+      @datas[node] = keep(text)
       return
     end
-    @pieces << Piece.new(text)
+    @pieces << Piece.new(keep(text))
     piece = @pieces.size - 1
     if entry.pieces_last == NO_NODE
       entry.pieces_first = piece
@@ -453,7 +486,7 @@ pub struct Dom
     i = 0
     while i < entry.attrs_count
       if i == index
-        @attrs << attr
+        @attrs << keep_attr(attr)
       else
         push_attr_copy(entry.attrs_start + i)
       end
@@ -461,7 +494,7 @@ pub struct Dom
     end
     count = entry.attrs_count
     if index >= count
-      @attrs << attr
+      @attrs << keep_attr(attr)
       count = count + 1
     end
     entry.attrs_start = start
@@ -530,13 +563,17 @@ pub struct Dom
     @names.pop
     @datas.pop
     @system_ids.pop
-    other.nodes.each { |node| @nodes << node }
-    other.names.each { |name| @names << name }
-    other.datas.each { |data| @datas << data }
-    other.system_ids.each { |system_id| @system_ids << system_id }
-    other.attrs.each { |attr| @attrs << attr }
-    other.pieces.each { |piece| @pieces << piece }
     @joined.append(other.joined_text)
+    other.nodes.each { |node| @nodes << node }
+    other.names.each { |name| @names << keep(name) }
+    other.datas.each { |data| @datas << keep(data) }
+    other.system_ids.each { |system_id| @system_ids << keep(system_id) }
+    other.attrs.each { |attr| @attrs << keep_attr(attr) }
+    other.pieces.each do |piece|
+      kept = Piece.new(keep(piece.text))
+      kept.next = piece.next
+      @pieces << kept
+    end
   end
 
   protected def joined_text : String
@@ -600,7 +637,7 @@ pub struct Dom
         end
         j = j + 1
       end
-      @attrs << candidate unless found
+      @attrs << keep_attr(candidate) unless found
       i = i + 1
     end
     entry.attrs_start = new_start

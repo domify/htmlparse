@@ -5,7 +5,7 @@ module htmlparse/serialize
 
 import std/int
 import htmlparse/tags::{Tag}
-import htmlparse/dom::{Dom, NodeKind, Namespace}
+import htmlparse/dom::{Dom, Node, NodeKind, Namespace}
 
 pub struct SerializeOptions
   # Whether `<` and `>` in attribute values are written `&lt;` and
@@ -46,28 +46,28 @@ end
 private def serialize_node(dom : Dom, root : Int32, writer : String::Builder, options : SerializeOptions) : Nil
   node = root
   while true
-    write_start(dom, node, writer, options)
-    inside = first_inside(dom, node)
+    entry = dom.entry(node)
+    write_start(dom, node, entry, writer, options)
+    inside = first_inside(dom, entry)
     if inside >= 0
       node = inside
       next
     end
     while true
-      write_end(dom, node, writer)
+      write_end(dom, entry, writer)
       return if node == root
-      sibling = dom.next_sibling(node)
-      if sibling >= 0
-        node = sibling
+      if entry.next >= 0
+        node = entry.next
         break
       end
-      node = dom.parent(node)
+      node = entry.parent
+      entry = dom.entry(node)
       # A template's contents are done: its own children come next.
-      owner = dom.contents_owner(node)
-      if owner >= 0
-        node = owner
-        child = dom.first_child(owner)
-        if child >= 0
-          node = child
+      if entry.kind == NodeKind::Fragment && entry.contents >= 0
+        node = entry.contents
+        entry = dom.entry(node)
+        if entry.first_child >= 0
+          node = entry.first_child
           break
         end
       end
@@ -75,31 +75,28 @@ private def serialize_node(dom : Dom, root : Int32, writer : String::Builder, op
   end
 end
 
-# The first node written inside *node*: its contents' first, if it is a
+# The first node written inside *entry*: its contents' first, if it is a
 # template that has any, then its first child. A void element has none.
-private def first_inside(dom : Dom, node : Int32) : Int32
-  return -1 if void_element?(dom, node)
-  contents = dom.contents(node)
-  if contents >= 0
-    first = dom.first_child(contents)
+private def first_inside(dom : Dom, entry : Node) : Int32
+  return -1 if void_element?(entry)
+  if entry.contents >= 0 && entry.kind != NodeKind::Fragment
+    first = dom.first_child(entry.contents)
     return first if first >= 0
   end
-  dom.first_child(node)
+  entry.first_child
 end
 
-private def void_element?(dom : Dom, node : Int32) : Bool
-  dom.kind(node) == NodeKind::Element && dom.namespace(node) == Namespace::Html &&
-    void?(dom.tag(node))
+private def void_element?(entry : Node) : Bool
+  entry.kind == NodeKind::Element && entry.namespace == Namespace::Html && void?(entry.tag)
 end
 
-private def write_start(dom : Dom, node : Int32, writer : String::Builder, options : SerializeOptions) : Nil
-  case dom.kind(node)
+private def write_start(dom : Dom, node : Int32, entry : Node, writer : String::Builder, options : SerializeOptions) : Nil
+  case entry.kind
   when NodeKind::Element
-    writer << '<' << dom.name(node)
+    writer << '<' << dom.name_of(entry)
     i = 0
-    count = dom.attrs_count(node)
-    while i < count
-      attr = dom.attr(node, i)
+    while i < entry.attrs_count
+      attr = dom.attr_at(entry.attrs_start + i)
       writer << ' '
       case attr.namespace
       when Namespace::Xml.value
@@ -116,8 +113,7 @@ private def write_start(dom : Dom, node : Int32, writer : String::Builder, optio
     end
     writer << '>'
   when NodeKind::Text
-    parent = dom.parent(node)
-    if parent >= 0 && raw_text?(dom, parent, options)
+    if entry.parent >= 0 && raw_text?(dom.entry(entry.parent), options)
       writer << dom.data(node)
     else
       escape(dom.data(node), writer, false, false)
@@ -125,14 +121,14 @@ private def write_start(dom : Dom, node : Int32, writer : String::Builder, optio
   when NodeKind::Comment
     writer << "<!--" << dom.data(node) << "-->"
   when NodeKind::Doctype
-    writer << "<!DOCTYPE " << dom.name(node) << '>'
+    writer << "<!DOCTYPE " << dom.name_of(entry) << '>'
   end
   nil
 end
 
-private def write_end(dom : Dom, node : Int32, writer : String::Builder) : Nil
-  return unless dom.kind(node) == NodeKind::Element && !void_element?(dom, node)
-  writer << "</" << dom.name(node) << '>'
+private def write_end(dom : Dom, entry : Node, writer : String::Builder) : Nil
+  return unless entry.kind == NodeKind::Element && !void_element?(entry)
+  writer << "</" << dom.name_of(entry) << '>'
   nil
 end
 
@@ -146,9 +142,9 @@ private def void?(tag : Tag) : Bool
   end
 end
 
-private def raw_text?(dom : Dom, parent : Int32, options : SerializeOptions) : Bool
-  return false unless dom.element?(parent) && dom.namespace(parent) == Namespace::Html
-  case dom.tag(parent)
+private def raw_text?(parent : Node, options : SerializeOptions) : Bool
+  return false unless parent.kind == NodeKind::Element && parent.namespace == Namespace::Html
+  case parent.tag
   when Tag::Style, Tag::Script, Tag::Xmp, Tag::Iframe, Tag::Noembed, Tag::Noframes, Tag::Plaintext
     true
   when Tag::Noscript
@@ -166,6 +162,15 @@ private def escape(text : String, writer : String::Builder, attribute : Bool, br
   i = 0
   size = text.bytesize
   while i < size
+    # Most bytes need nothing: this loop makes no scratch, so its rounds
+    # cost no scope check, as the outer loop's do.
+    while i < size
+      byte = text[i]
+      break if byte == 0x26_u8 || byte == 0xc2_u8 || byte == 0x22_u8 ||
+               byte == 0x3c_u8 || byte == 0x3e_u8
+      i = i + 1
+    end
+    break if i >= size
     byte = text[i]
     replacement = ""
     width = 1

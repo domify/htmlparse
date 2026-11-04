@@ -3,7 +3,7 @@
   "cpu": "AMD Ryzen 7 PRO 6850U with Radeon Graphics",
   "cores": 16,
   "versions": {
-    "ris": "ris 0.1.0 (built on iyi 0.18.0, built on Crystal 1.22.0-dev [f917d75c3] (2026-10-21))\n\nThe compiler was not built in release mode.",
+    "ris": "ris 0.1.0 (built on iyi 0.19.1, built on Crystal 1.22.0-dev [f2c92726b] (2026-11-04))\n\nThe compiler was not built in release mode.",
     "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)"
   },
   "rounds": 5,
@@ -22,50 +22,50 @@
       "kind": "fragment",
       "bytes": 118,
       "iterations": 200000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/ris",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/0.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/ris",
+      "input": "/tmp/htmlparse-bench.__21v0mq/0.html",
       "samples": [
         {
           "checksum": "2589808524669502464",
-          "parse_ns": 489539173,
-          "write_ns": 62060795,
-          "peak_rss_kib": 3288
+          "parse_ns": 501141517,
+          "write_ns": 108716925,
+          "peak_rss_kib": 2592
         },
         {
           "checksum": "2589808524669502464",
-          "parse_ns": 491182320,
-          "write_ns": 61780025,
-          "peak_rss_kib": 3036
+          "parse_ns": 498204029,
+          "write_ns": 110259470,
+          "peak_rss_kib": 2760
         },
         {
           "checksum": "2589808524669502464",
-          "parse_ns": 502849508,
-          "write_ns": 61745748,
-          "peak_rss_kib": 3272
+          "parse_ns": 494972848,
+          "write_ns": 107074288,
+          "peak_rss_kib": 2724
         },
         {
           "checksum": "2589808524669502464",
-          "parse_ns": 490185591,
-          "write_ns": 60663641,
-          "peak_rss_kib": 3132
+          "parse_ns": 499096848,
+          "write_ns": 106624511,
+          "peak_rss_kib": 2836
         },
         {
           "checksum": "2589808524669502464",
-          "parse_ns": 488516835,
-          "write_ns": 60826370,
-          "peak_rss_kib": 3296
+          "parse_ns": 500741712,
+          "write_ns": 107245190,
+          "peak_rss_kib": 2772
         }
       ],
       "memory": [],
       "warmup": {
         "checksum": "2589808524669502464",
-        "parse_ns": 498938289,
-        "write_ns": 61430720,
-        "peak_rss_kib": 3196
+        "parse_ns": 505009254,
+        "write_ns": 104844245,
+        "peak_rss_kib": 2820
       },
-      "median_parse_us": 2.450927955,
-      "median_serialize_us": 0.30872874,
-      "median_parse_mib_s": 45.91467860422584
+      "median_parse_us": 2.49548424,
+      "median_serialize_us": 0.5362259500000001,
+      "median_parse_mib_s": 45.09488280155899
     },
     {
       "impl": "htmlparse",
@@ -73,50 +73,50 @@
       "kind": "fragment",
       "bytes": 1446,
       "iterations": 20000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/ris",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/1.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/ris",
+      "input": "/tmp/htmlparse-bench.__21v0mq/1.html",
       "samples": [
         {
           "checksum": "6960312850691653600",
-          "parse_ns": 512524350,
-          "write_ns": 69130621,
-          "peak_rss_kib": 3424
+          "parse_ns": 560681180,
+          "write_ns": 124991598,
+          "peak_rss_kib": 2804
         },
         {
           "checksum": "6960312850691653600",
-          "parse_ns": 510635745,
-          "write_ns": 69416033,
-          "peak_rss_kib": 3256
+          "parse_ns": 563344878,
+          "write_ns": 126564961,
+          "peak_rss_kib": 2836
         },
         {
           "checksum": "6960312850691653600",
-          "parse_ns": 506801994,
-          "write_ns": 69104863,
-          "peak_rss_kib": 3264
+          "parse_ns": 565828146,
+          "write_ns": 131688863,
+          "peak_rss_kib": 2848
         },
         {
           "checksum": "6960312850691653600",
-          "parse_ns": 515117092,
-          "write_ns": 69028883,
-          "peak_rss_kib": 3200
+          "parse_ns": 559941922,
+          "write_ns": 125510141,
+          "peak_rss_kib": 2668
         },
         {
           "checksum": "6960312850691653600",
-          "parse_ns": 509566080,
-          "write_ns": 69098506,
-          "peak_rss_kib": 3416
+          "parse_ns": 563286220,
+          "write_ns": 127102027,
+          "peak_rss_kib": 2776
         }
       ],
       "memory": [],
       "warmup": {
         "checksum": "6960312850691653600",
-        "parse_ns": 513419998,
-        "write_ns": 69197468,
-        "peak_rss_kib": 3424
+        "parse_ns": 564355952,
+        "write_ns": 126206807,
+        "peak_rss_kib": 2820
       },
-      "median_parse_us": 25.53178725,
-      "median_serialize_us": 3.45524315,
-      "median_parse_mib_s": 54.01161493398538
+      "median_parse_us": 28.164311,
+      "median_serialize_us": 6.32824805,
+      "median_parse_mib_s": 48.96313854521197
     },
     {
       "impl": "htmlparse",
@@ -124,50 +124,50 @@
       "kind": "document",
       "bytes": 3173,
       "iterations": 20000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/ris",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/2.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/ris",
+      "input": "/tmp/htmlparse-bench.__21v0mq/2.html",
       "samples": [
         {
           "checksum": "7076747721837865984",
-          "parse_ns": 1119065683,
-          "write_ns": 121340700,
-          "peak_rss_kib": 3424
+          "parse_ns": 1246497347,
+          "write_ns": 222309674,
+          "peak_rss_kib": 2812
         },
         {
           "checksum": "7076747721837865984",
-          "parse_ns": 1133053228,
-          "write_ns": 123265695,
-          "peak_rss_kib": 3144
+          "parse_ns": 1275390716,
+          "write_ns": 228522898,
+          "peak_rss_kib": 2680
         },
         {
           "checksum": "7076747721837865984",
-          "parse_ns": 1107464962,
-          "write_ns": 124537163,
-          "peak_rss_kib": 3424
+          "parse_ns": 1235212233,
+          "write_ns": 221332780,
+          "peak_rss_kib": 2668
         },
         {
           "checksum": "7076747721837865984",
-          "parse_ns": 1110565831,
-          "write_ns": 123525245,
-          "peak_rss_kib": 3408
+          "parse_ns": 1235845250,
+          "write_ns": 221132823,
+          "peak_rss_kib": 2812
         },
         {
           "checksum": "7076747721837865984",
-          "parse_ns": 1104656413,
-          "write_ns": 122879738,
-          "peak_rss_kib": 3360
+          "parse_ns": 1231779984,
+          "write_ns": 220962311,
+          "peak_rss_kib": 2804
         }
       ],
       "memory": [],
       "warmup": {
         "checksum": "7076747721837865984",
-        "parse_ns": 1121010373,
-        "write_ns": 124988542,
-        "peak_rss_kib": 3424
+        "parse_ns": 1245326886,
+        "write_ns": 222584215,
+        "peak_rss_kib": 2880
       },
-      "median_parse_us": 55.52829155,
-      "median_serialize_us": 6.16328475,
-      "median_parse_mib_s": 54.49489839305224
+      "median_parse_us": 61.7922625,
+      "median_serialize_us": 11.066638999999999,
+      "median_parse_mib_s": 48.97067178851124
     },
     {
       "impl": "htmlparse",
@@ -175,57 +175,57 @@
       "kind": "document",
       "bytes": 45941,
       "iterations": 1000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/ris",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/3.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/ris",
+      "input": "/tmp/htmlparse-bench.__21v0mq/3.html",
       "samples": [
         {
           "checksum": "2784728956082473456",
-          "parse_ns": 766867156,
-          "write_ns": 91268357,
-          "peak_rss_kib": 3808
+          "parse_ns": 827387473,
+          "write_ns": 153064881,
+          "peak_rss_kib": 2980
         },
         {
           "checksum": "2784728956082473456",
-          "parse_ns": 764759469,
-          "write_ns": 89630180,
-          "peak_rss_kib": 3536
+          "parse_ns": 838367004,
+          "write_ns": 154295500,
+          "peak_rss_kib": 3064
         },
         {
           "checksum": "2784728956082473456",
-          "parse_ns": 760686585,
-          "write_ns": 88755307,
-          "peak_rss_kib": 3804
+          "parse_ns": 829417114,
+          "write_ns": 153397893,
+          "peak_rss_kib": 3208
         },
         {
           "checksum": "2784728956082473456",
-          "parse_ns": 771035265,
-          "write_ns": 90173951,
-          "peak_rss_kib": 3808
+          "parse_ns": 838215188,
+          "write_ns": 155369392,
+          "peak_rss_kib": 2924
         },
         {
           "checksum": "2784728956082473456",
-          "parse_ns": 769415840,
-          "write_ns": 89838729,
-          "peak_rss_kib": 3804
+          "parse_ns": 834404031,
+          "write_ns": 152893234,
+          "peak_rss_kib": 3208
         }
       ],
       "memory": [
-        224,
-        512,
-        508,
-        512,
+        572,
+        588,
+        268,
+        820,
         512
       ],
       "warmup": {
         "checksum": "2784728956082473456",
-        "parse_ns": 754351919,
-        "write_ns": 89076585,
-        "peak_rss_kib": 3620
+        "parse_ns": 831446921,
+        "write_ns": 154211919,
+        "peak_rss_kib": 3132
       },
-      "median_parse_us": 766.8671559999999,
-      "median_serialize_us": 89.838729,
-      "median_parse_mib_s": 57.132127027773684,
-      "median_parse_memory_kib": 512
+      "median_parse_us": 834.4040309999999,
+      "median_serialize_us": 153.397893,
+      "median_parse_mib_s": 52.50783810034054,
+      "median_parse_memory_kib": 572
     },
     {
       "impl": "htmlparse",
@@ -233,57 +233,57 @@
       "kind": "document",
       "bytes": 925317,
       "iterations": 50,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/ris",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/4.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/ris",
+      "input": "/tmp/htmlparse-bench.__21v0mq/4.html",
       "samples": [
         {
           "checksum": "6807728046593629904",
-          "parse_ns": 899546985,
-          "write_ns": 113060365,
-          "peak_rss_kib": 12756
+          "parse_ns": 889036053,
+          "write_ns": 151921882,
+          "peak_rss_kib": 11168
         },
         {
           "checksum": "6807728046593629904",
-          "parse_ns": 886351970,
-          "write_ns": 110248111,
-          "peak_rss_kib": 12768
+          "parse_ns": 878857717,
+          "write_ns": 153401217,
+          "peak_rss_kib": 11284
         },
         {
           "checksum": "6807728046593629904",
-          "parse_ns": 900999205,
-          "write_ns": 111526148,
-          "peak_rss_kib": 12616
+          "parse_ns": 881860277,
+          "write_ns": 152307289,
+          "peak_rss_kib": 11236
         },
         {
           "checksum": "6807728046593629904",
-          "parse_ns": 900686710,
-          "write_ns": 112347413,
-          "peak_rss_kib": 12600
+          "parse_ns": 868173759,
+          "write_ns": 151111189,
+          "peak_rss_kib": 11288
         },
         {
           "checksum": "6807728046593629904",
-          "parse_ns": 904096497,
-          "write_ns": 111045829,
-          "peak_rss_kib": 12604
+          "parse_ns": 869714310,
+          "write_ns": 149421244,
+          "peak_rss_kib": 11308
         }
       ],
       "memory": [
-        7808,
-        7796,
-        7680,
-        7604,
-        7528
+        6868,
+        6752,
+        6696,
+        6816,
+        6748
       ],
       "warmup": {
         "checksum": "6807728046593629904",
-        "parse_ns": 888472594,
-        "write_ns": 110464521,
-        "peak_rss_kib": 12608
+        "parse_ns": 877845497,
+        "write_ns": 151178711,
+        "peak_rss_kib": 11272
       },
-      "median_parse_us": 18013.7342,
-      "median_serialize_us": 2230.52296,
-      "median_parse_mib_s": 48.987680601731206,
-      "median_parse_memory_kib": 7680
+      "median_parse_us": 17577.15434,
+      "median_serialize_us": 3038.43764,
+      "median_parse_mib_s": 50.20443243340617,
+      "median_parse_memory_kib": 6752
     },
     {
       "impl": "htmlparse",
@@ -291,57 +291,57 @@
       "kind": "document",
       "bytes": 4694804,
       "iterations": 8,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/ris",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/5.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/ris",
+      "input": "/tmp/htmlparse-bench.__21v0mq/5.html",
       "samples": [
         {
           "checksum": "5529296021080907088",
-          "parse_ns": 753559409,
-          "write_ns": 93809737,
-          "peak_rss_kib": 51664
+          "parse_ns": 768972212,
+          "write_ns": 138843212,
+          "peak_rss_kib": 45856
         },
         {
           "checksum": "5529296021080907088",
-          "parse_ns": 761004709,
-          "write_ns": 95942140,
-          "peak_rss_kib": 51668
+          "parse_ns": 782914417,
+          "write_ns": 140189320,
+          "peak_rss_kib": 45968
         },
         {
           "checksum": "5529296021080907088",
-          "parse_ns": 752225892,
-          "write_ns": 93798697,
-          "peak_rss_kib": 51560
+          "parse_ns": 779626879,
+          "write_ns": 139359317,
+          "peak_rss_kib": 45804
         },
         {
           "checksum": "5529296021080907088",
-          "parse_ns": 750798503,
-          "write_ns": 96581608,
-          "peak_rss_kib": 51408
+          "parse_ns": 786197430,
+          "write_ns": 139531858,
+          "peak_rss_kib": 45932
         },
         {
           "checksum": "5529296021080907088",
-          "parse_ns": 762423978,
-          "write_ns": 96404651,
-          "peak_rss_kib": 51556
+          "parse_ns": 780475229,
+          "write_ns": 139687616,
+          "peak_rss_kib": 45972
         }
       ],
       "memory": [
-        38476,
-        38644,
-        38784,
-        38504,
-        38736
+        34268,
+        34176,
+        34376,
+        34204,
+        34268
       ],
       "warmup": {
         "checksum": "5529296021080907088",
-        "parse_ns": 761976104,
-        "write_ns": 94764375,
-        "peak_rss_kib": 51464
+        "parse_ns": 768893311,
+        "write_ns": 139319123,
+        "peak_rss_kib": 46012
       },
-      "median_parse_us": 94194.926125,
-      "median_serialize_us": 11992.7675,
-      "median_parse_mib_s": 47.53243279175965,
-      "median_parse_memory_kib": 38644
+      "median_parse_us": 97559.403625,
+      "median_serialize_us": 17441.48225,
+      "median_parse_mib_s": 45.89320792254205,
+      "median_parse_memory_kib": 34268
     },
     {
       "impl": "html5ever",
@@ -349,50 +349,50 @@
       "kind": "fragment",
       "bytes": 118,
       "iterations": 200000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/target/release/htmlparse_bench",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/0.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/target/release/htmlparse_bench",
+      "input": "/tmp/htmlparse-bench.__21v0mq/0.html",
       "samples": [
         {
           "checksum": "2589808524669502464",
-          "parse_ns": 569360858,
-          "write_ns": 182630693,
-          "peak_rss_kib": 3028
+          "parse_ns": 567132393,
+          "write_ns": 183940131,
+          "peak_rss_kib": 3152
         },
         {
           "checksum": "2589808524669502464",
-          "parse_ns": 577523578,
-          "write_ns": 187055812,
-          "peak_rss_kib": 3128
+          "parse_ns": 566555838,
+          "write_ns": 182756933,
+          "peak_rss_kib": 3116
         },
         {
           "checksum": "2589808524669502464",
-          "parse_ns": 581637576,
-          "write_ns": 183397894,
-          "peak_rss_kib": 2976
+          "parse_ns": 567876018,
+          "write_ns": 185468836,
+          "peak_rss_kib": 3088
         },
         {
           "checksum": "2589808524669502464",
-          "parse_ns": 583820768,
-          "write_ns": 185783425,
-          "peak_rss_kib": 3144
+          "parse_ns": 561494708,
+          "write_ns": 194341244,
+          "peak_rss_kib": 3060
         },
         {
           "checksum": "2589808524669502464",
-          "parse_ns": 580742483,
-          "write_ns": 185091482,
-          "peak_rss_kib": 2964
+          "parse_ns": 565162102,
+          "write_ns": 184529331,
+          "peak_rss_kib": 3188
         }
       ],
       "memory": [],
       "warmup": {
         "checksum": "2589808524669502464",
-        "parse_ns": 572262773,
-        "write_ns": 182273479,
-        "peak_rss_kib": 3016
+        "parse_ns": 561322569,
+        "write_ns": 180618273,
+        "peak_rss_kib": 2812
       },
-      "median_parse_us": 2.9037124149999998,
-      "median_serialize_us": 0.92545741,
-      "median_parse_mib_s": 38.755067049550604
+      "median_parse_us": 2.83277919,
+      "median_serialize_us": 0.922646655,
+      "median_parse_mib_s": 39.725499867124306
     },
     {
       "impl": "html5ever",
@@ -400,50 +400,50 @@
       "kind": "fragment",
       "bytes": 1446,
       "iterations": 20000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/target/release/htmlparse_bench",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/1.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/target/release/htmlparse_bench",
+      "input": "/tmp/htmlparse-bench.__21v0mq/1.html",
       "samples": [
         {
           "checksum": "6960312850691653600",
-          "parse_ns": 716827737,
-          "write_ns": 214089358,
+          "parse_ns": 716051324,
+          "write_ns": 213211894,
+          "peak_rss_kib": 3164
+        },
+        {
+          "checksum": "6960312850691653600",
+          "parse_ns": 715065134,
+          "write_ns": 215343959,
+          "peak_rss_kib": 3100
+        },
+        {
+          "checksum": "6960312850691653600",
+          "parse_ns": 717618369,
+          "write_ns": 213135723,
+          "peak_rss_kib": 3184
+        },
+        {
+          "checksum": "6960312850691653600",
+          "parse_ns": 717181753,
+          "write_ns": 211956763,
+          "peak_rss_kib": 3196
+        },
+        {
+          "checksum": "6960312850691653600",
+          "parse_ns": 716361568,
+          "write_ns": 213346460,
           "peak_rss_kib": 3128
-        },
-        {
-          "checksum": "6960312850691653600",
-          "parse_ns": 724943253,
-          "write_ns": 214383828,
-          "peak_rss_kib": 2896
-        },
-        {
-          "checksum": "6960312850691653600",
-          "parse_ns": 719092125,
-          "write_ns": 215426394,
-          "peak_rss_kib": 3020
-        },
-        {
-          "checksum": "6960312850691653600",
-          "parse_ns": 733674860,
-          "write_ns": 216869700,
-          "peak_rss_kib": 3036
-        },
-        {
-          "checksum": "6960312850691653600",
-          "parse_ns": 726657736,
-          "write_ns": 216293536,
-          "peak_rss_kib": 2992
         }
       ],
       "memory": [],
       "warmup": {
         "checksum": "6960312850691653600",
-        "parse_ns": 730467185,
-        "write_ns": 213845666,
-        "peak_rss_kib": 3092
+        "parse_ns": 711675516,
+        "write_ns": 213541307,
+        "peak_rss_kib": 3256
       },
-      "median_parse_us": 36.24716265,
-      "median_serialize_us": 10.7713197,
-      "median_parse_mib_s": 38.04471745386221
+      "median_parse_us": 35.8180784,
+      "median_serialize_us": 10.660594699999999,
+      "median_parse_mib_s": 38.50047582461704
     },
     {
       "impl": "html5ever",
@@ -451,50 +451,50 @@
       "kind": "document",
       "bytes": 3173,
       "iterations": 20000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/target/release/htmlparse_bench",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/2.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/target/release/htmlparse_bench",
+      "input": "/tmp/htmlparse-bench.__21v0mq/2.html",
       "samples": [
         {
           "checksum": "7076747721837865984",
-          "parse_ns": 1852828343,
-          "write_ns": 335629337,
-          "peak_rss_kib": 3144
+          "parse_ns": 1821751375,
+          "write_ns": 329081127,
+          "peak_rss_kib": 2976
         },
         {
           "checksum": "7076747721837865984",
-          "parse_ns": 1860372292,
-          "write_ns": 332183956,
-          "peak_rss_kib": 3072
+          "parse_ns": 1796573756,
+          "write_ns": 321576090,
+          "peak_rss_kib": 3112
         },
         {
           "checksum": "7076747721837865984",
-          "parse_ns": 1839347792,
-          "write_ns": 327634831,
-          "peak_rss_kib": 3020
+          "parse_ns": 1817347643,
+          "write_ns": 326383250,
+          "peak_rss_kib": 2988
         },
         {
           "checksum": "7076747721837865984",
-          "parse_ns": 1839170430,
-          "write_ns": 327169913,
-          "peak_rss_kib": 3128
+          "parse_ns": 1810310793,
+          "write_ns": 327598622,
+          "peak_rss_kib": 3196
         },
         {
           "checksum": "7076747721837865984",
-          "parse_ns": 1835925492,
-          "write_ns": 327294982,
-          "peak_rss_kib": 3128
+          "parse_ns": 1797589176,
+          "write_ns": 326838995,
+          "peak_rss_kib": 3196
         }
       ],
       "memory": [],
       "warmup": {
         "checksum": "7076747721837865984",
-        "parse_ns": 1846129865,
-        "write_ns": 334312103,
-        "peak_rss_kib": 3160
+        "parse_ns": 1807655684,
+        "write_ns": 326835980,
+        "peak_rss_kib": 3028
       },
-      "median_parse_us": 91.96738959999999,
-      "median_serialize_us": 16.38174155,
-      "median_parse_mib_s": 32.90306073835797
+      "median_parse_us": 90.51553965000001,
+      "median_serialize_us": 16.34194975,
+      "median_parse_mib_s": 33.43081881473411
     },
     {
       "impl": "html5ever",
@@ -502,57 +502,57 @@
       "kind": "document",
       "bytes": 45941,
       "iterations": 1000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/target/release/htmlparse_bench",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/3.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/target/release/htmlparse_bench",
+      "input": "/tmp/htmlparse-bench.__21v0mq/3.html",
       "samples": [
         {
           "checksum": "2784728956082473456",
-          "parse_ns": 1299726927,
-          "write_ns": 267473456,
-          "peak_rss_kib": 3768
+          "parse_ns": 1279049027,
+          "write_ns": 262169188,
+          "peak_rss_kib": 3788
         },
         {
           "checksum": "2784728956082473456",
-          "parse_ns": 1313971410,
-          "write_ns": 262606416,
-          "peak_rss_kib": 3588
+          "parse_ns": 1292402737,
+          "write_ns": 263563305,
+          "peak_rss_kib": 3716
         },
         {
           "checksum": "2784728956082473456",
-          "parse_ns": 1309769660,
-          "write_ns": 268111014,
-          "peak_rss_kib": 3800
+          "parse_ns": 1290800592,
+          "write_ns": 264450789,
+          "peak_rss_kib": 3732
         },
         {
           "checksum": "2784728956082473456",
-          "parse_ns": 1304082014,
-          "write_ns": 268641885,
-          "peak_rss_kib": 3784
+          "parse_ns": 1285060176,
+          "write_ns": 261031077,
+          "peak_rss_kib": 3836
         },
         {
           "checksum": "2784728956082473456",
-          "parse_ns": 1306621296,
-          "write_ns": 268352891,
-          "peak_rss_kib": 3768
+          "parse_ns": 1274384831,
+          "write_ns": 262338166,
+          "peak_rss_kib": 3816
         }
       ],
       "memory": [
-        1128,
-        896,
-        484,
-        604,
-        656
+        596,
+        852,
+        664,
+        660,
+        708
       ],
       "warmup": {
         "checksum": "2784728956082473456",
-        "parse_ns": 1310791763,
-        "write_ns": 267261201,
-        "peak_rss_kib": 3784
+        "parse_ns": 1277664296,
+        "write_ns": 260254514,
+        "peak_rss_kib": 3820
       },
-      "median_parse_us": 1306.621296,
-      "median_serialize_us": 268.111014,
-      "median_parse_mib_s": 33.53133146087918,
-      "median_parse_memory_kib": 656
+      "median_parse_us": 1285.060176,
+      "median_serialize_us": 262.338166,
+      "median_parse_mib_s": 34.093930065123686,
+      "median_parse_memory_kib": 664
     },
     {
       "impl": "html5ever",
@@ -560,57 +560,57 @@
       "kind": "document",
       "bytes": 925317,
       "iterations": 50,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/target/release/htmlparse_bench",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/4.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/target/release/htmlparse_bench",
+      "input": "/tmp/htmlparse-bench.__21v0mq/4.html",
       "samples": [
         {
           "checksum": "6807728046593629904",
-          "parse_ns": 1266734918,
-          "write_ns": 342010984,
-          "peak_rss_kib": 17464
+          "parse_ns": 1233374038,
+          "write_ns": 317455405,
+          "peak_rss_kib": 17580
         },
         {
           "checksum": "6807728046593629904",
-          "parse_ns": 1258684515,
-          "write_ns": 338570705,
-          "peak_rss_kib": 17528
+          "parse_ns": 1231630696,
+          "write_ns": 316096363,
+          "peak_rss_kib": 17692
         },
         {
           "checksum": "6807728046593629904",
-          "parse_ns": 1260268077,
-          "write_ns": 340317376,
-          "peak_rss_kib": 17552
+          "parse_ns": 1238860293,
+          "write_ns": 326580405,
+          "peak_rss_kib": 17584
         },
         {
           "checksum": "6807728046593629904",
-          "parse_ns": 1274847013,
-          "write_ns": 340221341,
-          "peak_rss_kib": 17492
+          "parse_ns": 1241399765,
+          "write_ns": 325274137,
+          "peak_rss_kib": 17468
         },
         {
           "checksum": "6807728046593629904",
-          "parse_ns": 1262994400,
-          "write_ns": 341311381,
-          "peak_rss_kib": 17552
+          "parse_ns": 1228967865,
+          "write_ns": 317550152,
+          "peak_rss_kib": 17612
         }
       ],
       "memory": [
-        12052,
-        11912,
-        12200,
-        12128,
-        12084
+        12032,
+        12148,
+        12044,
+        11836,
+        12176
       ],
       "warmup": {
         "checksum": "6807728046593629904",
-        "parse_ns": 1255317599,
-        "write_ns": 331114221,
-        "peak_rss_kib": 17564
+        "parse_ns": 1247756798,
+        "write_ns": 331627124,
+        "peak_rss_kib": 17652
       },
-      "median_parse_us": 25259.888,
-      "median_serialize_us": 6806.347519999999,
-      "median_parse_mib_s": 34.934876094228215,
-      "median_parse_memory_kib": 12084
+      "median_parse_us": 24667.480760000002,
+      "median_serialize_us": 6351.00304,
+      "median_parse_mib_s": 35.773862196136236,
+      "median_parse_memory_kib": 12044
     },
     {
       "impl": "html5ever",
@@ -618,57 +618,57 @@
       "kind": "document",
       "bytes": 4694804,
       "iterations": 8,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/target/release/htmlparse_bench",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/5.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/target/release/htmlparse_bench",
+      "input": "/tmp/htmlparse-bench.__21v0mq/5.html",
       "samples": [
         {
           "checksum": "5529296021080907088",
-          "parse_ns": 1038931921,
-          "write_ns": 311764007,
-          "peak_rss_kib": 76176
+          "parse_ns": 1020903700,
+          "write_ns": 303843336,
+          "peak_rss_kib": 76228
         },
         {
           "checksum": "5529296021080907088",
-          "parse_ns": 1042398345,
-          "write_ns": 312895522,
-          "peak_rss_kib": 76240
+          "parse_ns": 1014502858,
+          "write_ns": 305107293,
+          "peak_rss_kib": 76132
         },
         {
           "checksum": "5529296021080907088",
-          "parse_ns": 1036537234,
-          "write_ns": 315787370,
-          "peak_rss_kib": 76104
+          "parse_ns": 1023057794,
+          "write_ns": 305030539,
+          "peak_rss_kib": 76116
         },
         {
           "checksum": "5529296021080907088",
-          "parse_ns": 1043088892,
-          "write_ns": 313749821,
-          "peak_rss_kib": 76208
+          "parse_ns": 1017255105,
+          "write_ns": 301185245,
+          "peak_rss_kib": 76128
         },
         {
           "checksum": "5529296021080907088",
-          "parse_ns": 1043118845,
-          "write_ns": 313120884,
-          "peak_rss_kib": 76224
+          "parse_ns": 1028259812,
+          "write_ns": 303896010,
+          "peak_rss_kib": 76172
         }
       ],
       "memory": [
-        59636,
-        59368,
-        59568,
-        59420,
-        59552
+        59600,
+        59548,
+        59400,
+        59712,
+        59268
       ],
       "warmup": {
         "checksum": "5529296021080907088",
-        "parse_ns": 1068555556,
-        "write_ns": 308591911,
-        "peak_rss_kib": 76188
+        "parse_ns": 1021645830,
+        "write_ns": 307121873,
+        "peak_rss_kib": 76208
       },
-      "median_parse_us": 130299.793125,
-      "median_serialize_us": 39140.1105,
-      "median_parse_mib_s": 34.36163548675878,
-      "median_parse_memory_kib": 59552
+      "median_parse_us": 127612.9625,
+      "median_serialize_us": 37987.00125,
+      "median_parse_mib_s": 35.08510348516773,
+      "median_parse_memory_kib": 59548
     }
   ],
   "threaded": [
@@ -679,35 +679,35 @@
       "bytes": 118,
       "threads": 1,
       "iterations": 200000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/ris-threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/0.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/ris-threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/0.html",
       "samples": [
         {
           "checksum": "2589808524669502464",
-          "wall_ns": 606518858
+          "wall_ns": 687076579
         },
         {
           "checksum": "2589808524669502464",
-          "wall_ns": 601295149
+          "wall_ns": 684591970
         },
         {
           "checksum": "2589808524669502464",
-          "wall_ns": 613081849
+          "wall_ns": 709192007
         },
         {
           "checksum": "2589808524669502464",
-          "wall_ns": 610261460
+          "wall_ns": 717326042
         },
         {
           "checksum": "2589808524669502464",
-          "wall_ns": 617062755
+          "wall_ns": 693948368
         }
       ],
       "warmup": {
         "checksum": "2589808524669502464",
-        "wall_ns": 579978394
+        "wall_ns": 658822718
       },
-      "median_parses_per_s": 327728.38055347616
+      "median_parses_per_s": 288205.8798933583
     },
     {
       "impl": "htmlparse",
@@ -716,35 +716,35 @@
       "bytes": 118,
       "threads": 8,
       "iterations": 200000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/ris-threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/0.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/ris-threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/0.html",
       "samples": [
         {
           "checksum": "2271724123646468096",
-          "wall_ns": 768028492
+          "wall_ns": 906289070
         },
         {
           "checksum": "2271724123646468096",
-          "wall_ns": 742470858
+          "wall_ns": 866113923
         },
         {
           "checksum": "2271724123646468096",
-          "wall_ns": 806760313
+          "wall_ns": 897344005
         },
         {
           "checksum": "2271724123646468096",
-          "wall_ns": 773720868
+          "wall_ns": 881167375
         },
         {
           "checksum": "2271724123646468096",
-          "wall_ns": 760901016
+          "wall_ns": 885044704
         }
       ],
       "warmup": {
         "checksum": "2271724123646468096",
-        "wall_ns": 734312181
+        "wall_ns": 847596109
       },
-      "median_parses_per_s": 2083256.046704059
+      "median_parses_per_s": 1807818.2862048966
     },
     {
       "impl": "htmlparse",
@@ -753,35 +753,35 @@
       "bytes": 1446,
       "threads": 1,
       "iterations": 20000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/ris-threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/1.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/ris-threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/1.html",
       "samples": [
         {
           "checksum": "6960312850691653600",
-          "wall_ns": 629399947
+          "wall_ns": 773122370
         },
         {
           "checksum": "6960312850691653600",
-          "wall_ns": 655752536
+          "wall_ns": 780491536
         },
         {
           "checksum": "6960312850691653600",
-          "wall_ns": 654480005
+          "wall_ns": 767693742
         },
         {
           "checksum": "6960312850691653600",
-          "wall_ns": 644877535
+          "wall_ns": 785857413
         },
         {
           "checksum": "6960312850691653600",
-          "wall_ns": 640667621
+          "wall_ns": 778360681
         }
       ],
       "warmup": {
         "checksum": "6960312850691653600",
-        "wall_ns": 622648689
+        "wall_ns": 752992397
       },
-      "median_parses_per_s": 31013.640442599695
+      "median_parses_per_s": 25695.028652147448
     },
     {
       "impl": "htmlparse",
@@ -790,35 +790,35 @@
       "bytes": 1446,
       "threads": 8,
       "iterations": 20000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/ris-threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/1.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/ris-threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/1.html",
       "samples": [
         {
           "checksum": "342270584404573952",
-          "wall_ns": 790866707
+          "wall_ns": 1005195099
         },
         {
           "checksum": "342270584404573952",
-          "wall_ns": 839688752
+          "wall_ns": 999020079
         },
         {
           "checksum": "342270584404573952",
-          "wall_ns": 832807999
+          "wall_ns": 1005823651
         },
         {
           "checksum": "342270584404573952",
-          "wall_ns": 869717918
+          "wall_ns": 1008160028
         },
         {
           "checksum": "342270584404573952",
-          "wall_ns": 867048348
+          "wall_ns": 1000510444
         }
       ],
       "warmup": {
         "checksum": "342270584404573952",
-        "wall_ns": 785963601
+        "wall_ns": 961242272
       },
-      "median_parses_per_s": 190546.79441508107
+      "median_parses_per_s": 159173.0800907934
     },
     {
       "impl": "htmlparse",
@@ -827,35 +827,35 @@
       "bytes": 45941,
       "threads": 1,
       "iterations": 1000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/ris-threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/3.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/ris-threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/3.html",
       "samples": [
         {
           "checksum": "2784728956082473456",
-          "wall_ns": 925983391
+          "wall_ns": 1081367115
         },
         {
           "checksum": "2784728956082473456",
-          "wall_ns": 943433345
+          "wall_ns": 1104336496
         },
         {
           "checksum": "2784728956082473456",
-          "wall_ns": 922607086
+          "wall_ns": 1097876057
         },
         {
           "checksum": "2784728956082473456",
-          "wall_ns": 945976360
+          "wall_ns": 1118694186
         },
         {
           "checksum": "2784728956082473456",
-          "wall_ns": 933426233
+          "wall_ns": 1109029016
         }
       ],
       "warmup": {
         "checksum": "2784728956082473456",
-        "wall_ns": 922460622
+        "wall_ns": 1069416985
       },
-      "median_parses_per_s": 1071.3219370169554
+      "median_parses_per_s": 905.5211012423156
     },
     {
       "impl": "htmlparse",
@@ -864,35 +864,35 @@
       "bytes": 45941,
       "threads": 8,
       "iterations": 1000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/ris-threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/3.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/ris-threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/3.html",
       "samples": [
         {
           "checksum": "3831087574950236032",
-          "wall_ns": 1169260142
+          "wall_ns": 1390714515
         },
         {
           "checksum": "3831087574950236032",
-          "wall_ns": 1164494188
+          "wall_ns": 1396533016
         },
         {
           "checksum": "3831087574950236032",
-          "wall_ns": 1165925296
+          "wall_ns": 1400724853
         },
         {
           "checksum": "3831087574950236032",
-          "wall_ns": 1324219176
+          "wall_ns": 1420129032
         },
         {
           "checksum": "3831087574950236032",
-          "wall_ns": 1149916381
+          "wall_ns": 1391789381
         }
       ],
       "warmup": {
         "checksum": "3831087574950236032",
-        "wall_ns": 1170576229
+        "wall_ns": 1369570421
       },
-      "median_parses_per_s": 6861.503071805726
+      "median_parses_per_s": 5728.471800053741
     },
     {
       "impl": "htmlparse",
@@ -901,35 +901,35 @@
       "bytes": 925317,
       "threads": 1,
       "iterations": 50,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/ris-threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/4.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/ris-threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/4.html",
       "samples": [
         {
           "checksum": "6807728046593629904",
-          "wall_ns": 1124275635
+          "wall_ns": 1147355946
         },
         {
           "checksum": "6807728046593629904",
-          "wall_ns": 1117761173
+          "wall_ns": 1130078592
         },
         {
           "checksum": "6807728046593629904",
-          "wall_ns": 1123256834
+          "wall_ns": 1140825429
         },
         {
           "checksum": "6807728046593629904",
-          "wall_ns": 1119313671
+          "wall_ns": 1152876185
         },
         {
           "checksum": "6807728046593629904",
-          "wall_ns": 1130064770
+          "wall_ns": 1174500297
         }
       ],
       "warmup": {
         "checksum": "6807728046593629904",
-        "wall_ns": 1106384391
+        "wall_ns": 1117598638
       },
-      "median_parses_per_s": 44.513417133592085
+      "median_parses_per_s": 43.578455469127796
     },
     {
       "impl": "htmlparse",
@@ -938,35 +938,35 @@
       "bytes": 925317,
       "threads": 8,
       "iterations": 50,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/ris-threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/4.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/ris-threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/4.html",
       "samples": [
         {
           "checksum": "17568336225329936000",
-          "wall_ns": 1420605545
+          "wall_ns": 1476216943
         },
         {
           "checksum": "17568336225329936000",
-          "wall_ns": 1494885794
+          "wall_ns": 1487896175
         },
         {
           "checksum": "17568336225329936000",
-          "wall_ns": 1452543848
+          "wall_ns": 1470294250
         },
         {
           "checksum": "17568336225329936000",
-          "wall_ns": 1469220153
+          "wall_ns": 1475049184
         },
         {
           "checksum": "17568336225329936000",
-          "wall_ns": 1537060627
+          "wall_ns": 1485462812
         }
       ],
       "warmup": {
         "checksum": "17568336225329936000",
-        "wall_ns": 1418996232
+        "wall_ns": 1481299839
       },
-      "median_parses_per_s": 272.2532761228739
+      "median_parses_per_s": 270.9628838069771
     },
     {
       "impl": "html5ever",
@@ -975,35 +975,35 @@
       "bytes": 118,
       "threads": 1,
       "iterations": 200000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/target/release/threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/0.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/target/release/threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/0.html",
       "samples": [
         {
           "checksum": "2589808524669502464",
-          "wall_ns": 860302040
+          "wall_ns": 815320751
         },
         {
           "checksum": "2589808524669502464",
-          "wall_ns": 847743617
+          "wall_ns": 827336159
         },
         {
           "checksum": "2589808524669502464",
-          "wall_ns": 820877645
+          "wall_ns": 814988193
         },
         {
           "checksum": "2589808524669502464",
-          "wall_ns": 832853699
+          "wall_ns": 816505624
         },
         {
           "checksum": "2589808524669502464",
-          "wall_ns": 842784042
+          "wall_ns": 821943602
         }
       ],
       "warmup": {
         "checksum": "2589808524669502464",
-        "wall_ns": 818883255
+        "wall_ns": 803188266
       },
-      "median_parses_per_s": 237308.71733805325
+      "median_parses_per_s": 244946.26138668213
     },
     {
       "impl": "html5ever",
@@ -1012,35 +1012,35 @@
       "bytes": 118,
       "threads": 8,
       "iterations": 200000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/target/release/threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/0.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/target/release/threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/0.html",
       "samples": [
         {
           "checksum": "2271724123646468096",
-          "wall_ns": 1082223361
+          "wall_ns": 1019544810
         },
         {
           "checksum": "2271724123646468096",
-          "wall_ns": 1116687565
+          "wall_ns": 1049551377
         },
         {
           "checksum": "2271724123646468096",
-          "wall_ns": 1115667446
+          "wall_ns": 1021248482
         },
         {
           "checksum": "2271724123646468096",
-          "wall_ns": 1043070670
+          "wall_ns": 1001189041
         },
         {
           "checksum": "2271724123646468096",
-          "wall_ns": 1050303370
+          "wall_ns": 1008615088
         }
       ],
       "warmup": {
         "checksum": "2271724123646468096",
-        "wall_ns": 1017031889
+        "wall_ns": 1038297563
       },
-      "median_parses_per_s": 1478437.8693521845
+      "median_parses_per_s": 1569327.7865835049
     },
     {
       "impl": "html5ever",
@@ -1049,35 +1049,35 @@
       "bytes": 1446,
       "threads": 1,
       "iterations": 20000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/target/release/threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/1.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/target/release/threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/1.html",
       "samples": [
         {
           "checksum": "6960312850691653600",
-          "wall_ns": 1076102862
+          "wall_ns": 1066919467
         },
         {
           "checksum": "6960312850691653600",
-          "wall_ns": 1070544399
+          "wall_ns": 1076933488
         },
         {
           "checksum": "6960312850691653600",
-          "wall_ns": 1065199196
+          "wall_ns": 1073919200
         },
         {
           "checksum": "6960312850691653600",
-          "wall_ns": 1099346259
+          "wall_ns": 1081187144
         },
         {
           "checksum": "6960312850691653600",
-          "wall_ns": 1100290923
+          "wall_ns": 1067838124
         }
       ],
       "warmup": {
         "checksum": "6960312850691653600",
-        "wall_ns": 1051657902
+        "wall_ns": 1043108980
       },
-      "median_parses_per_s": 18585.583875159326
+      "median_parses_per_s": 18623.375017412855
     },
     {
       "impl": "html5ever",
@@ -1086,35 +1086,35 @@
       "bytes": 1446,
       "threads": 8,
       "iterations": 20000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/target/release/threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/1.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/target/release/threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/1.html",
       "samples": [
         {
           "checksum": "342270584404573952",
-          "wall_ns": 1322458017
+          "wall_ns": 1300636899
         },
         {
           "checksum": "342270584404573952",
-          "wall_ns": 1329674791
+          "wall_ns": 1361284972
         },
         {
           "checksum": "342270584404573952",
-          "wall_ns": 1407770960
+          "wall_ns": 1307700286
         },
         {
           "checksum": "342270584404573952",
-          "wall_ns": 1413621018
+          "wall_ns": 1374742377
         },
         {
           "checksum": "342270584404573952",
-          "wall_ns": 1422502199
+          "wall_ns": 1326086295
         }
       ],
       "warmup": {
         "checksum": "342270584404573952",
-        "wall_ns": 1325615184
+        "wall_ns": 1340770943
       },
-      "median_parses_per_s": 113654.85192278722
+      "median_parses_per_s": 120655.7978943595
     },
     {
       "impl": "html5ever",
@@ -1123,35 +1123,35 @@
       "bytes": 45941,
       "threads": 1,
       "iterations": 1000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/target/release/threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/3.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/target/release/threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/3.html",
       "samples": [
         {
           "checksum": "2784728956082473456",
-          "wall_ns": 1772078290
+          "wall_ns": 1791515777
         },
         {
           "checksum": "2784728956082473456",
-          "wall_ns": 1776435381
+          "wall_ns": 1780041046
         },
         {
           "checksum": "2784728956082473456",
-          "wall_ns": 1747007658
+          "wall_ns": 1752230365
         },
         {
           "checksum": "2784728956082473456",
-          "wall_ns": 1761915069
+          "wall_ns": 1749200355
         },
         {
           "checksum": "2784728956082473456",
-          "wall_ns": 1745437921
+          "wall_ns": 1788131730
         }
       ],
       "warmup": {
         "checksum": "2784728956082473456",
-        "wall_ns": 1724638355
+        "wall_ns": 1737785362
       },
-      "median_parses_per_s": 567.5642473320602
+      "median_parses_per_s": 561.7847983040274
     },
     {
       "impl": "html5ever",
@@ -1160,35 +1160,35 @@
       "bytes": 45941,
       "threads": 8,
       "iterations": 1000,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/target/release/threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/3.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/target/release/threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/3.html",
       "samples": [
         {
           "checksum": "3831087574950236032",
-          "wall_ns": 2233468101
+          "wall_ns": 2197062170
         },
         {
           "checksum": "3831087574950236032",
-          "wall_ns": 2254376138
+          "wall_ns": 2211792826
         },
         {
           "checksum": "3831087574950236032",
-          "wall_ns": 2257529965
+          "wall_ns": 2201659065
         },
         {
           "checksum": "3831087574950236032",
-          "wall_ns": 2335761183
+          "wall_ns": 2251681594
         },
         {
           "checksum": "3831087574950236032",
-          "wall_ns": 2285133950
+          "wall_ns": 2207905536
         }
       ],
       "warmup": {
         "checksum": "3831087574950236032",
-        "wall_ns": 2195623401
+        "wall_ns": 2242694407
       },
-      "median_parses_per_s": 3543.6960412616277
+      "median_parses_per_s": 3623.3434218808893
     },
     {
       "impl": "html5ever",
@@ -1197,35 +1197,35 @@
       "bytes": 925317,
       "threads": 1,
       "iterations": 50,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/target/release/threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/4.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/target/release/threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/4.html",
       "samples": [
         {
           "checksum": "6807728046593629904",
-          "wall_ns": 1767501729
+          "wall_ns": 1754071457
         },
         {
           "checksum": "6807728046593629904",
-          "wall_ns": 1801680060
+          "wall_ns": 1769761141
         },
         {
           "checksum": "6807728046593629904",
-          "wall_ns": 1786750653
+          "wall_ns": 1773499255
         },
         {
           "checksum": "6807728046593629904",
-          "wall_ns": 1807567167
+          "wall_ns": 1800164465
         },
         {
           "checksum": "6807728046593629904",
-          "wall_ns": 1810866066
+          "wall_ns": 1770551699
         }
       ],
       "warmup": {
         "checksum": "6807728046593629904",
-        "wall_ns": 1768628104
+        "wall_ns": 1755716277
       },
-      "median_parses_per_s": 27.751875102619497
+      "median_parses_per_s": 28.239785389062508
     },
     {
       "impl": "html5ever",
@@ -1234,35 +1234,35 @@
       "bytes": 925317,
       "threads": 8,
       "iterations": 50,
-      "binary": "/tmp/htmlparse-bench.st0bdxq0/target/release/threads",
-      "input": "/tmp/htmlparse-bench.st0bdxq0/4.html",
+      "binary": "/tmp/htmlparse-bench.__21v0mq/target/release/threads",
+      "input": "/tmp/htmlparse-bench.__21v0mq/4.html",
       "samples": [
         {
           "checksum": "17568336225329936000",
-          "wall_ns": 2485102076
+          "wall_ns": 2464474375
         },
         {
           "checksum": "17568336225329936000",
-          "wall_ns": 2449750798
+          "wall_ns": 2417652856
         },
         {
           "checksum": "17568336225329936000",
-          "wall_ns": 2509288588
+          "wall_ns": 2429690288
         },
         {
           "checksum": "17568336225329936000",
-          "wall_ns": 2493481376
+          "wall_ns": 2397577826
         },
         {
           "checksum": "17568336225329936000",
-          "wall_ns": 2598653725
+          "wall_ns": 2434771487
         }
       ],
       "warmup": {
         "checksum": "17568336225329936000",
-        "wall_ns": 2432367205
+        "wall_ns": 2418107796
       },
-      "median_parses_per_s": 160.41828258676352
+      "median_parses_per_s": 164.63003617191887
     }
   ]
 }

@@ -85,33 +85,33 @@ attributes, tables, lists, SVG, comments, a script and style, unclosed
 and misnested tags. One warmup and five rounds in a shuffled order;
 medians.
 
-Local result, 2026-10-21, AMD Ryzen 7 PRO 6850U, Linux 7.0, rustc 1.99.0,
+Local result, 2026-11-04, AMD Ryzen 7 PRO 6850U, Linux 7.0, rustc 1.99.0,
 ris 0.1.0:
 
 Parse:
 
 | Input | htmlparse | html5ever | html5ever vs htmlparse |
 | --- | ---: | ---: | ---: |
-| message, 118 B | 2.5 µs | 2.9 µs | 18% slower |
-| rich message, 1 KiB | 25.5 µs | 36.2 µs | 42% slower |
-| page, 3 KiB | 55.5 µs | 92.0 µs | 66% slower |
-| page, 45 KiB | 766.9 µs | 1,306.6 µs | 70% slower |
-| page, 904 KiB | 18,013.7 µs | 25,259.9 µs | 40% slower |
-| page, 4.5 MiB | 94,194.9 µs | 130,299.8 µs | 38% slower |
+| message, 118 B | 2.5 µs | 2.8 µs | 14% slower |
+| rich message, 1 KiB | 28.2 µs | 35.8 µs | 27% slower |
+| page, 3 KiB | 61.8 µs | 90.5 µs | 46% slower |
+| page, 45 KiB | 834.4 µs | 1,285.1 µs | 54% slower |
+| page, 904 KiB | 17,577.2 µs | 24,667.5 µs | 40% slower |
+| page, 4.5 MiB | 97,559.4 µs | 127,613.0 µs | 31% slower |
 
 Serialize:
 
 | Input | htmlparse | html5ever | html5ever vs htmlparse |
 | --- | ---: | ---: | ---: |
-| message, 118 B | 0.3 µs | 0.9 µs | 3.0× slower |
-| rich message, 1 KiB | 3.5 µs | 10.8 µs | 3.1× slower |
-| page, 3 KiB | 6.2 µs | 16.4 µs | 2.7× slower |
-| page, 45 KiB | 89.8 µs | 268.1 µs | 3.0× slower |
-| page, 904 KiB | 2,230.5 µs | 6,806.3 µs | 3.1× slower |
-| page, 4.5 MiB | 11,992.8 µs | 39,140.1 µs | 3.3× slower |
+| message, 118 B | 0.5 µs | 0.9 µs | 72% slower |
+| rich message, 1 KiB | 6.3 µs | 10.7 µs | 68% slower |
+| page, 3 KiB | 11.1 µs | 16.3 µs | 48% slower |
+| page, 45 KiB | 153.4 µs | 262.3 µs | 71% slower |
+| page, 904 KiB | 3,038.4 µs | 6,351.0 µs | 2.1× slower |
+| page, 4.5 MiB | 17,441.5 µs | 37,987.0 µs | 2.2× slower |
 
-Parsing, html5ever is 18 to 70% slower than htmlparse; serializing,
-about three times slower throughout.
+Parsing, html5ever is 14 to 54% slower than htmlparse; serializing, 48%
+slower to 2.2 times as slow.
 
 The memory one parse takes, without serializing: the peak RSS of a
 process that parses the input once, less that of one that only reads it.
@@ -121,13 +121,14 @@ Memory per parse:
 
 | Input | htmlparse | html5ever | html5ever vs htmlparse |
 | --- | ---: | ---: | ---: |
-| page, 45 KiB | 0.5 MiB | 0.6 MiB | 28% more |
-| page, 904 KiB | 7.5 MiB | 11.8 MiB | 57% more |
-| page, 4.5 MiB | 37.7 MiB | 58.2 MiB | 54% more |
+| page, 45 KiB | 0.6 MiB | 0.6 MiB | 16% more |
+| page, 904 KiB | 6.6 MiB | 11.8 MiB | 78% more |
+| page, 4.5 MiB | 33.5 MiB | 58.2 MiB | 74% more |
 
-htmlparse's tree takes about eight bytes for each byte of input, and
-html5ever's about half as much again on the larger pages. The tape keeps all of
-it until the parse's block ends, and gives its pages back when it
+htmlparse's tree takes about seven and a half bytes for each byte of
+input on the larger pages, and html5ever's about three quarters as much
+again. The tape keeps all of it until the parse's block ends, and gives
+its pages back when it
 does: a loop of parses faults them in again each time, where html5ever's
 allocator reuses its own.
 
@@ -141,19 +142,19 @@ Parses and serializations per second on 8 threads:
 
 | Input | htmlparse | html5ever | html5ever vs htmlparse |
 | --- | ---: | ---: | ---: |
-| message, 118 B | 2,083,256 | 1,478,438 | 41% slower |
-| rich message, 1 KiB | 190,547 | 113,655 | 68% slower |
-| page, 45 KiB | 6,862 | 3,544 | 94% slower |
-| page, 904 KiB | 272 | 160 | 70% slower |
+| message, 118 B | 1,807,818 | 1,569,328 | 15% slower |
+| rich message, 1 KiB | 159,173 | 120,656 | 32% slower |
+| page, 45 KiB | 5,728 | 3,623 | 58% slower |
+| page, 904 KiB | 271 | 165 | 65% slower |
 
 From 1 thread to 8, how many times as many per second:
 
 | Input | htmlparse | html5ever |
 | --- | ---: | ---: |
-| message, 118 B | 6.4× | 6.2× |
-| rich message, 1 KiB | 6.1× | 6.1× |
-| page, 45 KiB | 6.4× | 6.2× |
-| page, 904 KiB | 6.1× | 5.8× |
+| message, 118 B | 6.3× | 6.4× |
+| rich message, 1 KiB | 6.2× | 6.5× |
+| page, 45 KiB | 6.3× | 6.4× |
+| page, 904 KiB | 6.2× | 5.8× |
 
 Each thread's tape is its own, so the parses share nothing and need no
 lock: htmlparse goes from 1 thread to 8 about as html5ever does, six
